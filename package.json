@@ -1,12 +1,12 @@
 {
-  "name": "proof-service",
+  "name": "services",
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
   "license": "ISC",
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"tsx watch src/index.ts\" \"tsx watch src/workers/proof-worker.ts\"",
+    "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "build": "tsc",
     "lint": "eslint . --ext .ts",
@@ -15,23 +15,18 @@
   "keywords": [],
   "author": "",
   "dependencies": {
-    "cors": "^2.8.5",
     "dotenv": "^16.4.7",
-    "express": "^4.18.2",
-    "express-validator": "^7.0.1",
     "helmet": "^7.1.0",
     "mina-signer": "^3.0.7",
+    "mongoose": "^8.9.5",
     "o1js": "2.2.0",
     "zkcloudworker": "^0.23.11",
-    "zkusd": "file:../zkusd/contracts/zkusd-0.1.0.tgz"
+    "zkusd": "file:../core/zkusd-0.3.0.tgz"
   },
   "devDependencies": {
-    "@types/cors": "^2.8.17",
-    "@types/express": "^4.17.21",
     "@types/node": "^20.11.19",
     "@typescript-eslint/eslint-plugin": "^7.0.1",
     "@typescript-eslint/parser": "^7.0.1",
-    "concurrently": "^8.2.2",
     "eslint": "^8.56.0",
     "prettier": "^3.2.5",
     "tsx": "^4.7.1",

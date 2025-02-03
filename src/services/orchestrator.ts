@@ -11,19 +11,28 @@ import { getNetworkKeys } from 'zkusd';
 import { oracleAggregator } from './oracle-aggregator';
 import { blockchain } from 'zkcloudworker';
 import config from '../config';
+import { eventProcessor } from './event-processor';
+import { NetworkKeyPairs } from 'zkusd/build/src/config/keys';
 
-class OrchestratorService {
+/**
+ * Orchestrator coordinates block monitoring, oracle price aggregation, price proof generation,
+ * and event processing for the zkUSD system. It ensures these operations happen
+ * sequentially and reliably for each new block.
+ */
+class Orchestrator {
+  // Tracks the most recently processed block height
   private currentBlockHeight: UInt32 = UInt32.from(0);
+  // Flag to control the block watching loop
   private isWatching: boolean = false;
+  // Timer handle for the block checking interval
   private watchTimeout: NodeJS.Timeout | null = null;
-  private networkKeys;
+  // Flag to prevent concurrent block processing
   private isProcessing: boolean = false;
 
-  constructor() {
-    // Initialize network keys (oracles)
-    this.networkKeys = getNetworkKeys(config.network as blockchain);
-  }
-
+  /**
+   * Begins watching for new blocks if not already watching.
+   * Sets up a recurring check based on blockCheckInterval config.
+   */
   async start() {
     if (this.isWatching) {
       console.log('Orchestrator already running');
@@ -37,6 +46,9 @@ class OrchestratorService {
     this.scheduleNextCheck();
   }
 
+  /**
+   * Stops watching for new blocks and cleans up the check timer.
+   */
   stop() {
     if (this.watchTimeout) {
       clearTimeout(this.watchTimeout);
@@ -46,17 +58,20 @@ class OrchestratorService {
     console.log('Orchestrator stopped');
   }
 
+  /**
+   * Schedules the next block check based on the configured interval.
+   */
   private scheduleNextCheck() {
     if (!this.isWatching) return;
 
     this.watchTimeout = setTimeout(
       async () => {
         try {
+          console.log('🔍 Checking for new block');
           await this.checkNewBlock();
         } catch (error) {
           console.error('Error checking new block:', error);
         } finally {
-          // Schedule next check only after current one is complete
           this.scheduleNextCheck();
         }
       },
@@ -64,6 +79,10 @@ class OrchestratorService {
     );
   }
 
+  /**
+   * Checks for a new block and processes it if found.
+   * Prevents concurrent processing of blocks.
+   */
   private async checkNewBlock() {
     // If already processing a block, skip this check
     if (this.isProcessing) {
@@ -76,8 +95,7 @@ class OrchestratorService {
       const latestBlock = await fetchLastBlock();
       const blockHeight = latestBlock.blockchainLength;
 
-      if (blockHeight > this.currentBlockHeight) {
-        console.log(`New block detected: ${blockHeight}`);
+      if (blockHeight.toBigint() > this.currentBlockHeight.toBigint()) {
         await this.handleNewBlock(blockHeight);
         this.currentBlockHeight = blockHeight;
       }
@@ -86,29 +104,60 @@ class OrchestratorService {
     }
   }
 
+  /**
+   * Processes a new block by:
+   * 1. Collecting oracle price submissions
+   * 2. Generating a price proof
+   * 3. Processing on-chain events
+   * 4. Updating vault states
+   */
   private async handleNewBlock(blockHeight: UInt32) {
     try {
-      console.log('Collecting oracle submissions');
+      console.log(
+        '🔍 New block processing started ═══════════════════════════'
+      );
+      console.log(`📦 Block Height: ${blockHeight.toString()}`);
 
+      console.log('\n📡 Collecting oracle submissions...');
       const submissions =
         await oracleAggregator.collectSubmissions(blockHeight);
+      console.log(`✅ Collected oracle submissions`);
 
-      console.log('Generating proof for block', blockHeight.toString());
-      console.time('Proof generation');
+      console.log('\n🔐 Generating proof...');
+      console.time('⏱️ Proof generation duration');
+
       // Generate proof with the collected submissions
       await proof.generateProof({
         blockHeight: blockHeight,
         oraclePriceSubmissions: submissions,
       });
-      console.timeEnd('Proof generation');
+
+      console.timeEnd('⏱️ Proof generation duration');
+      console.log('✅ Proof generation successful');
+
+      // Process events
+      console.log('\n📋 Processing on-chain events...');
+      const events = await eventProcessor.processEvents(blockHeight);
+      if (events && events.length > 0) {
+        console.log('\n📜 Updated the vaults from the following events:');
+        events.forEach((event, index) => {
+          console.log(`   ${index + 1}. Type: ${event.type}`);
+          console.log(
+            `      Data: ${JSON.stringify(event.event.data, null, 2)}`
+          );
+        });
+      } else {
+        console.log('   🚫 No vaults updated from this block');
+      }
 
       console.log(
-        `Proof generation completed for block ${blockHeight.toString()}`
+        '\n✨ Block processing completed successfully ═══════════════'
       );
     } catch (error) {
-      console.error(`Error handling block ${blockHeight}:`, error);
+      console.error(`❌ Error processing block ${blockHeight}:`);
+      console.error(error);
     }
   }
 }
 
-export const orchestrator = new OrchestratorService();
+export const orchestrator = new Orchestrator();

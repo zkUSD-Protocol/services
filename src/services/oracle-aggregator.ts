@@ -8,13 +8,21 @@ const client = new Client({
   network: 'testnet',
 });
 
-class OracleAggregatorService {
+/**
+ * OracleAggregator collects and validates price submissions from authorized oracles.
+ * It ensures price data is properly signed and meets requirements.
+ */
+class OracleAggregator {
+  // Network-specific oracle configuration
   private networkKeys;
 
   constructor() {
     this.networkKeys = getNetworkKeys(config.network as blockchain);
   }
 
+  /**
+   * Collects price submissions from all authorized oracles for a given block height.
+   */
   async collectSubmissions(
     blockHeight: UInt32
   ): Promise<OraclePriceSubmissions> {
@@ -27,7 +35,7 @@ class OracleAggregatorService {
 
       // For now, using dummy data from test oracles
       const submissions = this.networkKeys.oracles!.map((oracle) => {
-        const price = UInt64.from(1e9);
+        const price = UInt64.from(0.8e9); // 80 cents
 
         const signature = client.signFields(
           [price.toBigInt(), blockHeight.toBigint()],
@@ -50,9 +58,16 @@ class OracleAggregatorService {
     }
   }
 
+  /**
+   * Validates a single oracle submission by checking:
+   * - Oracle authorization
+   * - Signature validity
+   * - Timestamp/block height validity
+   * - Price bounds
+   */
   validateSubmission(submission: PriceSubmission): boolean {
     try {
-      // Implement validation logic:
+      // TODO: Implement validation logic:
       // - Check if oracle is in whitelist
       // - Verify signature
       // - Check timestamp/block height
@@ -65,4 +80,4 @@ class OracleAggregatorService {
   }
 }
 
-export const oracleAggregator = new OracleAggregatorService();
+export const oracleAggregator = new OracleAggregator();

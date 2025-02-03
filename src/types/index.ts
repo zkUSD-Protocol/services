@@ -1,15 +1,5 @@
-import { OraclePriceSubmissions } from 'zkusd';
-import { PublicKey, UInt32, UInt64 } from 'o1js';
+import { IGenerateProofRequest } from './proof';
+import { EventData, IEvent } from './event';
+import { IProof } from './proof';
 
-export interface StoredProof {
-  id: string;
-  blockHeight: UInt32;
-  timestamp: Date;
-  proof: object;
-  price: UInt64;
-}
-
-export interface GenerateProofRequest {
-  blockHeight: UInt32;
-  oraclePriceSubmissions: OraclePriceSubmissions;
-}
+export { IGenerateProofRequest, IEvent, IProof, EventData };
