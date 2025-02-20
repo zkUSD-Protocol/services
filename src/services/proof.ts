@@ -19,15 +19,7 @@ class ProofService {
    * Initializes the service with network-specific oracle configuration.
    */
   constructor() {
-    const networkKeys = getNetworkKeys(config.network as blockchain);
-
-    this.whitelist = new OracleWhitelist({
-      addresses: [],
-    });
-
-    for (const key of networkKeys.oracles!) {
-      this.whitelist.addresses.push(key.publicKey);
-    }
+    this.whitelist = config.oracleWhitelist;
   }
 
   /**

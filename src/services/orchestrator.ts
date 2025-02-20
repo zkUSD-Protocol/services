@@ -7,12 +7,9 @@ import {
   UInt32,
 } from 'o1js';
 import { proof } from './proof';
-import { getNetworkKeys } from 'zkusd';
 import { oracleAggregator } from './oracle-aggregator';
-import { blockchain } from 'zkcloudworker';
 import config from '../config';
 import { eventProcessor } from './event-processor';
-import { NetworkKeyPairs } from 'zkusd/build/src/config/keys';
 
 /**
  * Orchestrator coordinates block monitoring, oracle price aggregation, price proof generation,
