@@ -3,8 +3,8 @@ import {
   PriceSubmission,
   OraclePriceSubmissions,
   OracleWhitelist,
-} from 'zkusd';
-import config from '../config';
+} from '@zkusd/core';
+import config from '../config/index.js';
 
 import Client from 'mina-signer';
 

@@ -1,5 +1,5 @@
 import mongoose, { Schema, Document, Model } from 'mongoose';
-import { IBlockTrackerDocument } from '../types/block-tracker';
+import { IBlockTrackerDocument } from '../types/block-tracker.js';
 
 /**
  * Mongoose model for tracking block processing progress.

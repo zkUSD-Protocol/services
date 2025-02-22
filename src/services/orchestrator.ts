@@ -1,15 +1,9 @@
-import {
-  Mina,
-  PublicKey,
-  UInt64,
-  Signature,
-  fetchLastBlock,
-  UInt32,
-} from 'o1js';
-import { proof } from './proof';
-import { oracleAggregator } from './oracle-aggregator';
-import config from '../config';
-import { eventProcessor } from './event-processor';
+import { fetchLastBlock, UInt32 } from 'o1js';
+import { proof } from './proof.js';
+import { oracleAggregator } from './oracle-aggregator.js';
+import config from '../config/index.js';
+import { eventProcessor } from './event-processor.js';
+import { logger } from '../utils/logger.js';
 
 /**
  * Orchestrator coordinates block monitoring, oracle price aggregation, price proof generation,
@@ -32,12 +26,12 @@ class Orchestrator {
    */
   async start() {
     if (this.isWatching) {
-      console.log('Orchestrator already running');
+      logger.info('Orchestrator already running');
       return;
     }
 
     this.isWatching = true;
-    console.log('Beginning to watch for new blocks');
+    logger.info('Beginning to watch for new blocks');
 
     // Start the first check
     this.scheduleNextCheck();
@@ -52,7 +46,7 @@ class Orchestrator {
       this.watchTimeout = null;
     }
     this.isWatching = false;
-    console.log('Orchestrator stopped');
+    logger.info('Orchestrator stopped');
   }
 
   /**
@@ -64,10 +58,10 @@ class Orchestrator {
     this.watchTimeout = setTimeout(
       async () => {
         try {
-          console.log('🔍 Checking for new block');
+          logger.info('🔍 Checking for new block');
           await this.checkNewBlock();
         } catch (error) {
-          console.error('Error checking new block:', error);
+          logger.error('Error checking new block:', error);
         } finally {
           this.scheduleNextCheck();
         }
@@ -83,7 +77,7 @@ class Orchestrator {
   private async checkNewBlock() {
     // If already processing a block, skip this check
     if (this.isProcessing) {
-      console.log('Still processing previous block, skipping check');
+      logger.info('Still processing previous block, skipping check');
       return;
     }
 
@@ -93,6 +87,10 @@ class Orchestrator {
       const blockHeight = latestBlock.blockchainLength;
 
       if (blockHeight.toBigint() > this.currentBlockHeight.toBigint()) {
+        logger.info('🔍 New block detected');
+        logger.info(
+          `📦 Processing from block ${this.currentBlockHeight.toBigint()} to ${blockHeight.toBigint()}`
+        );
         await this.handleNewBlock(blockHeight);
         this.currentBlockHeight = blockHeight;
       }
@@ -110,49 +108,61 @@ class Orchestrator {
    */
   private async handleNewBlock(blockHeight: UInt32) {
     try {
-      console.log(
+      logger.info(
         '🔍 New block processing started ═══════════════════════════'
       );
-      console.log(`📦 Block Height: ${blockHeight.toString()}`);
+      logger.info(`📦 Block Height: ${blockHeight.toString()}`);
 
-      console.log('\n📡 Collecting oracle submissions...');
+      logger.info('\n📡 Collecting oracle submissions...');
       const submissions =
         await oracleAggregator.collectSubmissions(blockHeight);
-      console.log(`✅ Collected oracle submissions`);
+      logger.info(`✅ Collected oracle submissions`);
 
-      console.log('\n🔐 Generating proof...');
+      logger.info('\n🔐 Generating proof...');
       console.time('⏱️ Proof generation duration');
 
-      // Generate proof with the collected submissions
-      await proof.generateProof({
-        blockHeight: blockHeight,
-        oraclePriceSubmissions: submissions,
-      });
+      try {
+        await Promise.race([
+          proof.generateProof({
+            blockHeight: blockHeight,
+            oraclePriceSubmissions: submissions,
+          }),
+          new Promise((_, reject) =>
+            setTimeout(
+              () => reject(new Error('Proof generation timeout')),
+              60000
+            )
+          ),
+        ]);
+      } catch (error) {
+        logger.error(`❌ Proof generation failed:`, error);
+        process.exit(1);
+      }
 
       console.timeEnd('⏱️ Proof generation duration');
-      console.log('✅ Proof generation successful');
+      logger.info('✅ Proof generation successful');
 
       // Process events
-      console.log('\n📋 Processing on-chain events...');
+      logger.info('\n📋 Processing on-chain events...');
       const events = await eventProcessor.processEvents(blockHeight);
       if (events && events.length > 0) {
-        console.log('\n📜 Updated the vaults from the following events:');
+        logger.info('\n📜 Updated the vaults from the following events:');
         events.forEach((event, index) => {
-          console.log(`   ${index + 1}. Type: ${event.type}`);
-          console.log(
+          logger.info(`   ${index + 1}. Type: ${event.type}`);
+          logger.info(
             `      Data: ${JSON.stringify(event.event.data, null, 2)}`
           );
         });
       } else {
-        console.log('   🚫 No vaults updated from this block');
+        logger.info('   🚫 No vaults updated from this block');
       }
 
-      console.log(
+      logger.info(
         '\n✨ Block processing completed successfully ═══════════════'
       );
     } catch (error) {
-      console.error(`❌ Error processing block ${blockHeight}:`);
-      console.error(error);
+      logger.error(`❌ Error processing block ${blockHeight}:`);
+      logger.error(error as string);
     }
   }
 }

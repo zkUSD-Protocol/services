@@ -1,6 +1,6 @@
 import { Document, Schema, Types } from 'mongoose';
 import { JsonProof, UInt32, UInt64 } from 'o1js';
-import { OraclePriceSubmissions } from 'zkusd';
+import { OraclePriceSubmissions } from '@zkusd/core';
 
 export interface IProof {
   blockHeight: UInt32;

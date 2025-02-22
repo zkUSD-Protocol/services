@@ -8,7 +8,7 @@ import {
   MintZkUsdEvent,
   BurnZkUsdEvent,
   LiquidateEvent,
-} from 'zkusd';
+} from '@zkusd/core';
 
 //
 

@@ -1,5 +1,5 @@
 import mongoose, { Schema } from 'mongoose';
-import { IEvent, IEventDocument, IEventSchema } from '../types/event';
+import { IEvent, IEventDocument, IEventSchema } from '../types/event.js';
 import { PublicKey, UInt64, UInt32, Field, Bool } from 'o1js';
 
 /**

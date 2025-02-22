@@ -1,8 +1,9 @@
 import { PublicKey, UInt32 } from 'o1js';
-import { BlockTrackerModel, EventModel, VaultModel } from '../models/index';
-import { oracleAggregationVk, ZkUsdEngineContract } from 'zkusd';
-import config from '../config';
-import { IEvent, VaultEventTypes } from '../types/event';
+import { BlockTrackerModel, EventModel, VaultModel } from '../models/index.js';
+import { oracleAggregationVk, ZkUsdEngineContract } from '@zkusd/core';
+import config from '../config/index.js';
+import { IEvent, VaultEventTypes } from '../types/event.js';
+import { logger } from '../utils/logger.js';
 
 /**
  * EventProcessor handles the processing of on-chain events from the zkUSD engine.
@@ -18,11 +19,11 @@ class EventProcessor {
    */
   constructor() {
     const ZkUsdEngine = ZkUsdEngineContract({
-      zkUsdTokenAddress: PublicKey.fromBase58(config.tokenAddress),
+      zkUsdTokenAddress: config.tokenPublicKey,
       minaPriceInputZkProgramVkHash: oracleAggregationVk.hash,
     });
 
-    this.engine = new ZkUsdEngine(PublicKey.fromBase58(config.engineAddress));
+    this.engine = new ZkUsdEngine(config.enginePublicKey);
   }
 
   /**
@@ -31,7 +32,6 @@ class EventProcessor {
    */
   async init(startBlock: number = 0) {
     await BlockTrackerModel.getOrCreate(startBlock);
-    await BlockTrackerModel.findOneAndUpdate({}, { isProcessing: false });
   }
 
   /**
@@ -49,23 +49,20 @@ class EventProcessor {
    * 4. Maintains block processing state
    */
   async processEvents(blockHeight: UInt32) {
-    const block = await BlockTrackerModel.findOneAndUpdate(
-      {},
-      { isProcessing: true }
-    );
+    const block = await BlockTrackerModel.findOne({});
 
     if (!block) throw new Error('No block found');
 
     let fromBlock = block.lastProcessedBlock;
     if (fromBlock === 0) fromBlock = block.startBlock;
 
-    console.log(
+    logger.info(
       `   📍 Processing events from block ${fromBlock} to ${blockHeight}`
     );
 
     try {
       const events = await this.engine.fetchEvents(UInt32.from(fromBlock));
-      console.log(`   📥 Found ${events.length} events to process`);
+      logger.info(`   📥 Found ${events.length} events to process`);
 
       const eventsUpdated = [];
 
@@ -78,7 +75,7 @@ class EventProcessor {
           });
 
           if (existingEvent) {
-            console.log('   🔄 Skipping event', event.type);
+            logger.info('   🔄 Skipping event', event.type);
             continue;
           }
 
@@ -113,8 +110,6 @@ class EventProcessor {
     } catch (error) {
       console.error('   ❌ Error fetching or processing events:', error);
       throw error;
-    } finally {
-      await BlockTrackerModel.findOneAndUpdate({}, { isProcessing: false });
     }
   }
 }

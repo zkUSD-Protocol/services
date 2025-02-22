@@ -1,10 +1,9 @@
-import { AggregateOraclePrices, OracleWhitelist } from 'zkusd';
-import { IGenerateProofRequest } from '../types';
-import { getNetworkKeys } from 'zkusd';
-import { blockchain } from 'zkcloudworker';
-import config from '../config';
-import { ProofModel } from '../models';
+import { AggregateOraclePrices, OracleWhitelist } from '@zkusd/core';
+import { IGenerateProofRequest } from '../types/index.js';
+import config from '../config/index.js';
+import { ProofModel } from '../models/index.js';
 import { Types } from 'mongoose';
+import { logger } from '../utils/logger.js';
 
 /**
  * ProofService handles the generation and storage of zero-knowledge proofs
@@ -65,7 +64,7 @@ class ProofService {
         ),
       });
     } catch (error) {
-      console.error('Failed to save proof:', error);
+      logger.error('Failed to save proof:', error);
       throw new Error('Failed to save proof');
     }
   }

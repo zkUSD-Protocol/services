@@ -1,5 +1,5 @@
 import { Schema, model } from 'mongoose';
-import { IProof, IProofDocument, IProofSchema } from '../types/proof';
+import { IProof, IProofDocument, IProofSchema } from '../types/proof.js';
 import { UInt32, UInt64 } from 'o1js';
 
 /**

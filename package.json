@@ -6,10 +6,10 @@
   "license": "ISC",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "dev:devnet": "DEPLOY_ENV=devnet tsx watch src/index.ts",
+    "dev": "NODE_ENV=local NETWORK=lightnet tsx watch src/index.ts",
+    "dev:devnet": "NODE_ENV=local NETWORK=devnet tsx watch src/index.ts",
     "start": "node dist/index.js",
-    "start:devnet": "DEPLOY_ENV=devnet node dist/index.js",
+    "start:devnet": "NODE_ENV=local NETWORK=devnet node dist/index.js",
     "build": "tsc",
     "lint": "eslint . --ext .ts",
     "format": "prettier --write \"src/**/*.ts\""
@@ -22,9 +22,8 @@
     "mina-signer": "^3.0.7",
     "mongodb": "^6.13.0",
     "mongoose": "^8.9.5",
-    "o1js": "2.2.0",
-    "zkcloudworker": "^0.23.11",
-    "zkusd": "file:../core/zkusd-0.3.0.tgz"
+    "o1js": "^2.2.0",
+    "@zkusd/core": "^0.0.1"
   },
   "devDependencies": {
     "@types/node": "^20.11.19",
@@ -34,5 +33,9 @@
     "prettier": "^3.2.5",
     "tsx": "^4.7.1",
     "typescript": "^5.3.3"
+  },
+  "peerDependencies": {
+    "express": "^4.21.2",
+    "o1js": "^2.2.0"
   }
 }

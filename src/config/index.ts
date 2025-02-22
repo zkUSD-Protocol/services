@@ -2,12 +2,33 @@ import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 import { PrivateKey, PublicKey } from 'o1js';
 import path from 'path';
-import { OracleWhitelist, blockchain, getNetworkKeys } from 'zkusd';
-import { KeyPair } from 'zkusd/types/utility.js';
+import {
+  OracleWhitelist,
+  blockchain,
+  getNetworkKeys,
+  KeyPair,
+  getContractKeys,
+} from '@zkusd/core';
 
 // Load the appropriate .env file based on the DEPLOY_ENV
-const envFile = process.env.DEPLOY_ENV === 'devnet' ? '.env.devnet' : '.env';
-dotenv.config({ path: path.resolve(process.cwd(), envFile), override: true });
+if (process.env.NODE_ENV === 'local') {
+  console.log(process.env.NETWORK);
+  if (process.env.NETWORK === 'lightnet') {
+    dotenv.config({
+      path: path.resolve(process.cwd(), '.env.lightnet'),
+      override: true,
+    });
+
+    console.log(process.env.ENGINE_ADDRESS);
+  } else {
+    dotenv.config({
+      path: path.resolve(process.cwd(), '.env.devnet'),
+      override: true,
+    });
+  }
+} else {
+  dotenv.config();
+}
 
 const buildOracleWhitelist = (chain: blockchain): OracleWhitelist => {
   const whitelist = new OracleWhitelist({
@@ -81,10 +102,11 @@ const buildOracleKeyList = (chain: blockchain): KeyPair[] => {
   return oracleKeys;
 };
 
+const { engine, token } = getContractKeys(process.env.NETWORK as blockchain);
+
 // Export both the whitelist and oracle keys along with other config
 const config = {
   nodeEnv: process.env.NODE_ENV || 'development',
-  port: process.env.PORT || 3000,
   network: process.env.NETWORK || 'local',
   blockCheckInterval: process.env.BLOCKCHECK_INTERVAL || 10,
   mongodb: {
@@ -94,8 +116,8 @@ const config = {
       useUnifiedTopology: true,
     } as mongoose.ConnectOptions,
   },
-  engineAddress: process.env.ENGINE_ADDRESS || '',
-  tokenAddress: process.env.TOKEN_ADDRESS || '',
+  enginePublicKey: engine,
+  tokenPublicKey: token,
   oracleWhitelist: buildOracleWhitelist(
     (process.env.NETWORK as blockchain) || 'local'
   ),

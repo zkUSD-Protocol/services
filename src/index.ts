@@ -1,9 +1,9 @@
 import { initializeBindings } from 'o1js';
-import { blockchain, initBlockchain } from 'zkcloudworker';
-import { proof } from './services/proof';
-import { orchestrator } from './services/orchestrator';
-import { eventProcessor } from './services/event-processor';
-import config from './config';
+import { MinaNetworkInterface, blockchain } from '@zkusd/core';
+import { proof } from './services/proof.js';
+import { orchestrator } from './services/orchestrator.js';
+import { eventProcessor } from './services/event-processor.js';
+import config from './config/index.js';
 import mongoose from 'mongoose';
 
 /**
@@ -23,7 +23,7 @@ import mongoose from 'mongoose';
 async function initBlockchainComponents() {
   try {
     await initializeBindings();
-    await initBlockchain(config.network as blockchain);
+    await MinaNetworkInterface.initChain(config.network as blockchain);
   } catch (error) {
     throw new Error(`Failed to initialize blockchain components: ${error}`);
   }

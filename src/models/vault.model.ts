@@ -1,7 +1,7 @@
 import mongoose, { Schema, Decimal128, Model } from 'mongoose';
 
-import { IVaultDocument, IVaultSchema } from '../types/vault';
-import { EventData, IEvent, VaultEventTypes } from '../types/event';
+import { IVaultDocument, IVaultSchema } from '../types/vault.js';
+import { EventData, IEvent, VaultEventTypes } from '../types/event.js';
 import {
   BurnZkUsdEvent,
   DepositCollateralEvent,
@@ -10,7 +10,7 @@ import {
   NewVaultEvent,
   RedeemCollateralEvent,
   VaultOwnerUpdatedEvent,
-} from 'zkusd';
+} from '@zkusd/core';
 
 /**
  * Mongoose model for tracking zkUSD vault states.
