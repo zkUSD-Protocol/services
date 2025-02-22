@@ -1,0 +1,71 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  DOCKER_IMAGE: mackcee/zkusd
+  DOCKER_TAG: latest
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: ${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }}
+          build-args: |
+            NODE_ENV=production
+            NETWORK=devnet
+            BLOCKCHECK_INTERVAL=10
+            MONGO_URI=${{ secrets.MONGO_URI }}
+            NUMBER_OF_ORACLES=3
+            DEVNET_ORACLE_1_PRIVATE_KEY=${{ secrets.DEVNET_ORACLE_1_PRIVATE_KEY }}
+            DEVNET_ORACLE_1_PUBLIC_KEY=${{ secrets.DEVNET_ORACLE_1_PUBLIC_KEY }}
+            DEVNET_ORACLE_2_PRIVATE_KEY=${{ secrets.DEVNET_ORACLE_2_PRIVATE_KEY }}
+            DEVNET_ORACLE_2_PUBLIC_KEY=${{ secrets.DEVNET_ORACLE_2_PUBLIC_KEY }}
+            DEVNET_ORACLE_3_PRIVATE_KEY=${{ secrets.DEVNET_ORACLE_3_PRIVATE_KEY }}
+            DEVNET_ORACLE_3_PUBLIC_KEY=${{ secrets.DEVNET_ORACLE_3_PUBLIC_KEY }}
+            DEVNET_ORACLE_DUMMY_PRIVATE_KEY=${{ secrets.DEVNET_ORACLE_DUMMY_PRIVATE_KEY }}
+            DEVNET_ORACLE_DUMMY_PUBLIC_KEY=${{ secrets.DEVNET_ORACLE_DUMMY_PUBLIC_KEY }}
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to Hetzner
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.HETZNER_HOST }}
+          username: ${{ secrets.HETZNER_USERNAME }}
+          key: ${{ secrets.HETZNER_SSH_KEY }}
+          script: |
+            # Pull the latest image
+            docker pull ${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }}
+
+            # Stop and remove the existing container
+            docker stop zkusd-services-container || true
+            docker rm zkusd-services-container || true
+
+            # Run the new container
+            docker run -d \
+              --name zkusd-services-container \
+              --restart unless-stopped \
+              ${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }}

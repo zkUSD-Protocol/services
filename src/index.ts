@@ -1,47 +1,121 @@
-import express from 'express';
-import cors from 'cors';
-import helmet from 'helmet';
-import routes from './routes';
-import { errorHandler } from './middleware/error-handler';
-import { requestLogger } from './middleware/request-logger';
-import { database } from './services/database';
-import config from './config';
+import { initializeBindings } from 'o1js';
+import { MinaNetworkInterface, blockchain } from '@zkusd/core';
+import { proof } from './services/proof.js';
+import { orchestrator } from './services/orchestrator.js';
+import { eventProcessor } from './services/event-processor.js';
+import config from './config/index.js';
+import mongoose from 'mongoose';
 
-const app = express();
+/**
+ * Main entry point for the zkUSD services.
+ * Initializes all required components:
+ * - Blockchain connection
+ * - MongoDB database
+ * - Event processor
+ * - Proof generation system
+ * - Service orchestrator
+ */
 
-// Middleware
-app.use(helmet());
-app.use(cors());
-app.use(express.json());
-app.use(requestLogger);
-
-// Routes
-app.use('/api', routes);
-
-// Error handling
-app.use(errorHandler);
-
-const PORT = config.port || 1337;
-
-// Start the API server
-const startServer = async () => {
+/**
+ * Initializes cryptographic and blockchain components.
+ * @throws Error if initialization fails
+ */
+async function initBlockchainComponents() {
   try {
-    // Start the API server
-    app.listen(PORT, () => {
-      console.log(`API Server is running on port ${PORT}`);
-    });
-
-    // Handle graceful shutdown
-    process.on('SIGTERM', () => {
-      console.log('SIGTERM signal received: closing HTTP server');
-      process.exit(0);
-    });
+    await initializeBindings();
+    await MinaNetworkInterface.initChain(config.network as blockchain);
   } catch (error) {
-    console.error('Failed to start server:', error);
+    throw new Error(`Failed to initialize blockchain components: ${error}`);
+  }
+}
+
+/**
+ * Initializes MongoDB connection with retry logic.
+ * @throws Error if connection fails after retries
+ */
+async function initDatabase(retries = 3, delay = 5000): Promise<void> {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      await mongoose.connect(config.mongodb.uri, config.mongodb.options);
+      console.log('Connected to MongoDB');
+      return;
+    } catch (error) {
+      if (attempt === retries) {
+        throw new Error(
+          `Database connection failed after ${retries} attempts: ${error}`
+        );
+      }
+      console.warn(
+        `Database connection attempt ${attempt} failed, retrying in ${delay / 1000}s...`
+      );
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+}
+
+/**
+ * Initializes core services in sequence.
+ * @throws Error if any service fails to initialize
+ */
+async function initCoreServices() {
+  try {
+    await eventProcessor.init();
+    await proof.init();
+    await orchestrator.start();
+  } catch (error) {
+    throw new Error(`Failed to initialize core services: ${error}`);
+  }
+}
+
+/**
+ * Gracefully shuts down services and connections.
+ */
+async function shutdown() {
+  console.log('\nShutting down services...');
+  try {
+    orchestrator.stop();
+    await mongoose.connection.close();
+    console.log('Services shut down successfully');
+    process.exit(0);
+  } catch (error) {
+    console.error('Error during shutdown:', error);
     process.exit(1);
   }
-};
+}
 
-startServer();
+/**
+ * Main initialization function that coordinates all service startups.
+ * Handles startup errors gracefully and ensures proper shutdown.
+ */
+async function initServices() {
+  try {
+    console.log('Initializing proof generation system...');
 
-export default app;
+    await initBlockchainComponents();
+    await initDatabase();
+    await initCoreServices();
+
+    console.log('Proof generation system initialized and running');
+  } catch (error) {
+    console.error('Critical initialization error:', error);
+    await shutdown();
+  }
+}
+
+// Handle process termination signals
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
+
+// Handle uncaught errors
+process.on('uncaughtException', async (error) => {
+  console.error('Uncaught exception:', error);
+  await shutdown();
+});
+
+process.on('unhandledRejection', async (error) => {
+  console.error('Unhandled rejection:', error);
+  await shutdown();
+});
+
+// Start the services
+initServices();

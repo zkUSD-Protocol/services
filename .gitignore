@@ -1,6 +1,8 @@
 node_modules/
 dist/
 .env
+.env*
 *.log
 coverage/
 data/
+docker.sh
