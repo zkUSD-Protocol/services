@@ -16,6 +16,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
 
@@ -29,6 +32,7 @@ jobs:
         uses: docker/build-push-action@v4
         with:
           context: .
+          platforms: linux/arm64
           push: true
           tags: ${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }}
           build-args: |
@@ -58,14 +62,26 @@ jobs:
           key: ${{ secrets.HETZNER_SSH_KEY }}
           script: |
             # Pull the latest image
-            docker pull ${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }}
+            if ! docker pull ${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }}; then
+              echo "Failed to pull Docker image"
+              exit 1
+            fi
 
             # Stop and remove the existing container
             docker stop zkusd-services-container || true
             docker rm zkusd-services-container || true
 
             # Run the new container
-            docker run -d \
+            if ! docker run -d \
               --name zkusd-services-container \
               --restart unless-stopped \
-              ${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }}
+              ${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }}; then
+              echo "Failed to start container"
+              exit 1
+            fi
+
+            # Verify container is running
+            if ! docker ps | grep zkusd-services-container; then
+              echo "Container is not running after deployment"
+              exit 1
+            fi
