@@ -12,14 +12,11 @@ import {
 
 // Load the appropriate .env file based on the DEPLOY_ENV
 if (process.env.NODE_ENV === 'local') {
-  console.log(process.env.NETWORK);
   if (process.env.NETWORK === 'lightnet') {
     dotenv.config({
       path: path.resolve(process.cwd(), '.env.lightnet'),
       override: true,
     });
-
-    console.log(process.env.ENGINE_ADDRESS);
   } else {
     dotenv.config({
       path: path.resolve(process.cwd(), '.env.devnet'),

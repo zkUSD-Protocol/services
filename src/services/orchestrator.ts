@@ -4,6 +4,12 @@ import { oracleAggregator } from './oracle-aggregator.js';
 import config from '../config/index.js';
 import { eventProcessor } from './event-processor.js';
 import { logger } from '../utils/logger.js';
+import { fork } from 'child_process';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 /**
  * Orchestrator coordinates block monitoring, oracle price aggregation, price proof generation,
@@ -19,6 +25,17 @@ class Orchestrator {
   private watchTimeout: NodeJS.Timeout | null = null;
   // Flag to prevent concurrent block processing
   private isProcessing: boolean = false;
+  private blockWorker: import('child_process').ChildProcess | null = null;
+
+  // Update setter name
+  setBlockWorker(worker: import('child_process').ChildProcess) {
+    this.blockWorker = worker;
+  }
+
+  // Add getter for block worker
+  getBlockWorker(): import('child_process').ChildProcess | null {
+    return this.blockWorker;
+  }
 
   /**
    * Begins watching for new blocks if not already watching.
@@ -31,7 +48,7 @@ class Orchestrator {
     }
 
     this.isWatching = true;
-    logger.info('Beginning to watch for new blocks');
+    logger.info('👀 Beginning to watch for new blocks');
 
     // Start the first check
     this.scheduleNextCheck();
@@ -88,9 +105,13 @@ class Orchestrator {
 
       if (blockHeight.toBigint() > this.currentBlockHeight.toBigint()) {
         logger.info('🔍 New block detected');
-        logger.info(
-          `📦 Processing from block ${this.currentBlockHeight.toBigint()} to ${blockHeight.toBigint()}`
-        );
+        if (this.currentBlockHeight.toBigint() === BigInt(0)) {
+          logger.info(`📦 Processing block ${blockHeight.toBigint()}`);
+        } else {
+          logger.info(
+            `📦 Processing from block ${this.currentBlockHeight.toBigint()} to ${blockHeight.toBigint()}`
+          );
+        }
         await this.handleNewBlock(blockHeight);
         this.currentBlockHeight = blockHeight;
       }
@@ -108,54 +129,45 @@ class Orchestrator {
    */
   private async handleNewBlock(blockHeight: UInt32) {
     try {
-      logger.info(
-        '🔍 New block processing started ═══════════════════════════'
-      );
-      logger.info(`📦 Block Height: ${blockHeight.toString()}`);
-
-      logger.info('\n📡 Collecting oracle submissions...');
-      const submissions =
-        await oracleAggregator.collectSubmissions(blockHeight);
-      logger.info(`✅ Collected oracle submissions`);
-
-      logger.info('\n🔐 Generating proof...');
-      console.time('⏱️ Proof generation duration');
-
-      try {
-        await Promise.race([
-          proof.generateProof({
-            blockHeight: blockHeight,
-            oraclePriceSubmissions: submissions,
-          }),
-          new Promise((_, reject) =>
-            setTimeout(
-              () => reject(new Error('Proof generation timeout')),
-              60000
-            )
-          ),
-        ]);
-      } catch (error) {
-        logger.error(`❌ Proof generation failed:`, error);
-        process.exit(1);
+      if (!this.blockWorker) {
+        throw new Error('Block worker not initialized');
       }
 
-      console.timeEnd('⏱️ Proof generation duration');
-      logger.info('✅ Proof generation successful');
-
-      // Process events
-      logger.info('\n📋 Processing on-chain events...');
-      const events = await eventProcessor.processEvents(blockHeight);
-      if (events && events.length > 0) {
-        logger.info('\n📜 Updated the vaults from the following events:');
-        events.forEach((event, index) => {
-          logger.info(`   ${index + 1}. Type: ${event.type}`);
-          logger.info(
-            `      Data: ${JSON.stringify(event.event.data, null, 2)}`
-          );
+      // Promise for worker completion
+      const blockProcessingPromise = new Promise((resolve, reject) => {
+        this.blockWorker!.once('message', (message: any) => {
+          if (message.type === 'success') {
+            resolve(message.events);
+          } else if (message.type === 'error') {
+            reject(new Error(message.error));
+          }
         });
-      } else {
-        logger.info('   🚫 No vaults updated from this block');
-      }
+
+        this.blockWorker!.once('error', (error) => reject(error));
+        this.blockWorker!.once('exit', (code) => {
+          if (code !== 0) reject(new Error(`Worker exited with code ${code}`));
+        });
+      });
+
+      // Start the worker
+      this.blockWorker.send({
+        type: 'processBlock',
+        data: { blockHeight },
+      });
+
+      // Add timeout
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Block processing timeout')), 60000)
+      );
+
+      // Wait for either the processing or a timeout
+      await Promise.race([
+        blockProcessingPromise,
+        timeoutPromise.catch((error) => {
+          logger.error('Block processing timed out - exiting process');
+          process.exit(1);
+        }),
+      ]);
 
       logger.info(
         '\n✨ Block processing completed successfully ═══════════════'
@@ -163,6 +175,7 @@ class Orchestrator {
     } catch (error) {
       logger.error(`❌ Error processing block ${blockHeight}:`);
       logger.error(error as string);
+      throw error;
     }
   }
 }
