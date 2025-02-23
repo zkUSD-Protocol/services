@@ -5,80 +5,60 @@ import { orchestrator } from './services/orchestrator.js';
 import { eventProcessor } from './services/event-processor.js';
 import config from './config/index.js';
 import mongoose from 'mongoose';
+import { fork } from 'child_process';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+import { logger } from './utils/logger.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 /**
- * Main entry point for the zkUSD services.
- * Initializes all required components:
- * - Blockchain connection
- * - MongoDB database
- * - Event processor
- * - Proof generation system
- * - Service orchestrator
+ * Initializes the block worker process.
+ * @throws Error if worker initialization fails
  */
+async function initBlockWorker(): Promise<
+  import('child_process').ChildProcess
+> {
+  return new Promise((resolve, reject) => {
+    const worker = fork(join(__dirname, 'services', 'block-worker.js'));
 
-/**
- * Initializes cryptographic and blockchain components.
- * @throws Error if initialization fails
- */
-async function initBlockchainComponents() {
-  try {
-    await initializeBindings();
-    await MinaNetworkInterface.initChain(config.network as blockchain);
-  } catch (error) {
-    throw new Error(`Failed to initialize blockchain components: ${error}`);
-  }
-}
-
-/**
- * Initializes MongoDB connection with retry logic.
- * @throws Error if connection fails after retries
- */
-async function initDatabase(retries = 3, delay = 5000): Promise<void> {
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      await mongoose.connect(config.mongodb.uri, config.mongodb.options);
-      console.log('Connected to MongoDB');
-      return;
-    } catch (error) {
-      if (attempt === retries) {
-        throw new Error(
-          `Database connection failed after ${retries} attempts: ${error}`
-        );
+    // Wait for initialization message
+    worker.once('message', (message: any) => {
+      if (message.type === 'initialized') {
+        resolve(worker);
+      } else if (message.type === 'error') {
+        reject(new Error(message.error));
       }
-      console.warn(
-        `Database connection attempt ${attempt} failed, retrying in ${delay / 1000}s...`
-      );
-      await new Promise((resolve) => setTimeout(resolve, delay));
-    }
-  }
-}
+    });
 
-/**
- * Initializes core services in sequence.
- * @throws Error if any service fails to initialize
- */
-async function initCoreServices() {
-  try {
-    await eventProcessor.init();
-    await proof.init();
-    await orchestrator.start();
-  } catch (error) {
-    throw new Error(`Failed to initialize core services: ${error}`);
-  }
+    worker.once('error', (error) => reject(error));
+    worker.once('exit', (code) => {
+      if (code !== 0)
+        reject(new Error(`Worker failed to initialize, exit code: ${code}`));
+    });
+  });
 }
 
 /**
  * Gracefully shuts down services and connections.
  */
 async function shutdown() {
-  console.log('\nShutting down services...');
+  logger.info('\n🛑 Initiating system shutdown...');
   try {
     orchestrator.stop();
-    await mongoose.connection.close();
-    console.log('Services shut down successfully');
+    if (orchestrator.getBlockWorker()) {
+      logger.info('👷 Stopping block worker');
+      orchestrator.getBlockWorker()!.send({ type: 'shutdown' });
+      // Wait for worker to exit
+      await new Promise<void>((resolve) => {
+        orchestrator.getBlockWorker()!.once('exit', () => resolve());
+      });
+    }
+    logger.info('✅ System shutdown complete');
     process.exit(0);
   } catch (error) {
-    console.error('Error during shutdown:', error);
+    logger.error('❌ Error during shutdown:', error);
     process.exit(1);
   }
 }
@@ -89,15 +69,22 @@ async function shutdown() {
  */
 async function initServices() {
   try {
-    console.log('Initializing proof generation system...');
+    logger.info('\n🚀 Initializing block processing system...');
 
-    await initBlockchainComponents();
-    await initDatabase();
-    await initCoreServices();
+    logger.info('⛓️  Initializing blockchain components');
+    await initializeBindings();
+    await MinaNetworkInterface.initChain(config.network as blockchain);
 
-    console.log('Proof generation system initialized and running');
+    logger.info('👷 Initializing block worker');
+    const blockWorker = await initBlockWorker();
+    orchestrator.setBlockWorker(blockWorker);
+
+    logger.info('🔄 Starting orchestrator');
+    await orchestrator.start();
+
+    logger.info('✅ System initialization complete\n');
   } catch (error) {
-    console.error('Critical initialization error:', error);
+    logger.error('❌ Critical initialization error:', error);
     await shutdown();
   }
 }

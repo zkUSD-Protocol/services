@@ -23,7 +23,7 @@
     "mongodb": "^6.13.0",
     "mongoose": "^8.9.5",
     "o1js": "^2.2.0",
-    "@zkusd/core": "^0.0.1"
+    "@zkusd/core": "^0.0.*"
   },
   "devDependencies": {
     "@types/node": "^20.11.19",
