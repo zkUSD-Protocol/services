@@ -115,6 +115,19 @@ class Orchestrator {
         await this.handleNewBlock(blockHeight);
         this.currentBlockHeight = blockHeight;
       }
+    } catch (error) {
+      logger.error('Error checking new block:', error);
+      if (
+        error instanceof Error &&
+        error.message.includes('Block processing timeout')
+      ) {
+        logger.error('Block processing timed out - exiting process');
+        this.blockWorker?.kill();
+        setTimeout(() => {
+          logger.info('Exiting process');
+          process.exit(1);
+        }, 3000);
+      }
     } finally {
       this.isProcessing = false;
     }
@@ -161,17 +174,13 @@ class Orchestrator {
       );
 
       // Wait for either the processing or a timeout
-      await Promise.race([
+      const events = await Promise.race([
         blockProcessingPromise,
-        timeoutPromise.catch((error) => {
-          logger.error('Block processing timed out - exiting process');
-          process.exit(1);
-        }),
+        timeoutPromise,
       ]);
 
-      logger.info(
-        '\n✨ Block processing completed successfully ═══════════════'
-      );
+      logger.info('\n✨ Block processing completed successfully');
+      return events;
     } catch (error) {
       logger.error(`❌ Error processing block ${blockHeight}:`);
       logger.error(error as string);
