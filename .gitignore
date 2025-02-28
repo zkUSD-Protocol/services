@@ -6,3 +6,5 @@ dist/
 coverage/
 data/
 docker.sh
+
+scripts/
