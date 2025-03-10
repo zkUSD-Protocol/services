@@ -39,6 +39,16 @@ jobs:
       - name: Download Terraform outputs
         run: aws s3 cp s3://zkusd-terraform-outputs/terraform-outputs.json terraform-outputs.json
 
+      - name: Debug TF file
+        run: |
+          echo "==== Dumping terraform-outputs.json ===="
+          cat terraform-outputs.json
+          echo "==== Testing with jq ===="
+          echo "proof_generator_ip:"
+          jq -r '.proof_generator_ip.value' terraform-outputs.json
+          echo "proof_generator_username:"
+          jq -r '.proof_generator_username.value' terraform-outputs.json
+
       - name: Parse Terraform outputs
         id: parse-outputs
         run: |
