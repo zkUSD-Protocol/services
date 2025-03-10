@@ -1,87 +1,221 @@
-name: Build and Deploy
+name: Build and Deploy Proof Generator
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
 
-env:
-  DOCKER_IMAGE: mackcee/zkusd
-  DOCKER_TAG: latest
-
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    outputs:
+      # Outputs for the second job:
+      ecr_registry: ${{ steps.login-ecr.outputs.registry }}
+      docker_tag: ${{ steps.set_docker_tag.outputs.tag }}
+
+      hetzner_host: ${{ steps.parse-outputs.outputs.hetzner_host }}
+      hetzner_username: ${{ steps.parse-outputs.outputs.hetzner_username }}
+      hetzner_ssh_key: ${{ steps.fetch-secrets.outputs.hetzner_ssh_key }}
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-
-      - name: Login to DockerHub
-        uses: docker/login-action@v2
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          role-to-assume: arn:aws:iam::565802942559:role/zkusd-services-github-actions-role
+          aws-region: eu-central-1
 
+      - name: Download Terraform outputs
+        run: aws s3 cp s3://zkusd-terraform-outputs/terraform-outputs.json terraform-outputs.json
+
+      - name: Parse Terraform outputs
+        id: parse-outputs
+        run: |
+          HETZNER_HOST=$(jq -r '.proof_generator_ip.value' terraform-outputs.json)
+          HETZNER_USERNAME=$(jq -r '.proof_generator_username.value' terraform-outputs.json)
+
+          # Mask them from logs
+          echo "::add-mask::$HETZNER_HOST"
+          echo "::add-mask::$HETZNER_USERNAME"
+
+          # Expose as step outputs (so we can pass them to next job)
+          echo "hetzner_host=$HETZNER_HOST" >> $GITHUB_OUTPUT
+          echo "hetzner_username=$HETZNER_USERNAME" >> $GITHUB_OUTPUT
+
+      - name: Fetch secret values
+        id: fetch-secrets
+        run: |
+          MONGO_URI=$(aws secretsmanager get-secret-value \
+            --secret-id zkusd/dev/mongo-uri \
+            --query SecretString --output text)
+
+          DEVNET_ORACLE_1_PRIVATE_KEY=$(aws secretsmanager get-secret-value \
+            --secret-id zkusd/dev/oracle-1/secret-key \
+            --query SecretString --output text)
+          DEVNET_ORACLE_1_PUBLIC_KEY=$(aws secretsmanager get-secret-value \
+            --secret-id zkusd/dev/oracle-1/public-key \
+            --query SecretString --output text)
+
+          DEVNET_ORACLE_2_PRIVATE_KEY=$(aws secretsmanager get-secret-value \
+            --secret-id zkusd/dev/oracle-2/secret-key \
+            --query SecretString --output text)
+          DEVNET_ORACLE_2_PUBLIC_KEY=$(aws secretsmanager get-secret-value \
+            --secret-id zkusd/dev/oracle-2/public-key \
+            --query SecretString --output text)
+
+          DEVNET_ORACLE_3_PRIVATE_KEY=$(aws secretsmanager get-secret-value \
+            --secret-id zkusd/dev/oracle-3/secret-key \
+            --query SecretString --output text)
+          DEVNET_ORACLE_3_PUBLIC_KEY=$(aws secretsmanager get-secret-value \
+            --secret-id zkusd/dev/oracle-3/public-key \
+            --query SecretString --output text)
+
+          DEVNET_ORACLE_DUMMY_PRIVATE_KEY=$(aws secretsmanager get-secret-value \
+            --secret-id zkusd/dev/oracle-dummy/secret-key \
+            --query SecretString --output text)
+          DEVNET_ORACLE_DUMMY_PUBLIC_KEY=$(aws secretsmanager get-secret-value \
+            --secret-id zkusd/dev/oracle-dummy/public-key \
+            --query SecretString --output text)
+
+          # SSH key for Hetzner
+          HETZNER_SSH_KEY=$(aws secretsmanager get-secret-value \
+            --secret-id zkusd/dev/proof-generator/ssh/public-key-0CN5sh \
+            --query SecretString --output text)
+
+          # Mask them from logs
+          echo "::add-mask::$MONGO_URI"
+          echo "::add-mask::$DEVNET_ORACLE_1_PRIVATE_KEY"
+          echo "::add-mask::$DEVNET_ORACLE_1_PUBLIC_KEY"
+          echo "::add-mask::$DEVNET_ORACLE_2_PRIVATE_KEY"
+          echo "::add-mask::$DEVNET_ORACLE_2_PUBLIC_KEY"
+          echo "::add-mask::$DEVNET_ORACLE_3_PRIVATE_KEY"
+          echo "::add-mask::$DEVNET_ORACLE_3_PUBLIC_KEY"
+          echo "::add-mask::$DEVNET_ORACLE_DUMMY_PRIVATE_KEY"
+          echo "::add-mask::$DEVNET_ORACLE_DUMMY_PUBLIC_KEY"
+          echo "::add-mask::$HETZNER_SSH_KEY"
+
+          # Export as environment variables (for Docker build)
+          echo "MONGO_URI=$MONGO_URI" >> $GITHUB_ENV
+          echo "DEVNET_ORACLE_1_PRIVATE_KEY=$DEVNET_ORACLE_1_PRIVATE_KEY" >> $GITHUB_ENV
+          echo "DEVNET_ORACLE_1_PUBLIC_KEY=$DEVNET_ORACLE_1_PUBLIC_KEY" >> $GITHUB_ENV
+          echo "DEVNET_ORACLE_2_PRIVATE_KEY=$DEVNET_ORACLE_2_PRIVATE_KEY" >> $GITHUB_ENV
+          echo "DEVNET_ORACLE_2_PUBLIC_KEY=$DEVNET_ORACLE_2_PUBLIC_KEY" >> $GITHUB_ENV
+          echo "DEVNET_ORACLE_3_PRIVATE_KEY=$DEVNET_ORACLE_3_PRIVATE_KEY" >> $GITHUB_ENV
+          echo "DEVNET_ORACLE_3_PUBLIC_KEY=$DEVNET_ORACLE_3_PUBLIC_KEY" >> $GITHUB_ENV
+          echo "DEVNET_ORACLE_DUMMY_PRIVATE_KEY=$DEVNET_ORACLE_DUMMY_PRIVATE_KEY" >> $GITHUB_ENV
+          echo "DEVNET_ORACLE_DUMMY_PUBLIC_KEY=$DEVNET_ORACLE_DUMMY_PUBLIC_KEY" >> $GITHUB_ENV
+
+          # Expose the SSH key as a step output for the next job
+          echo "hetzner_ssh_key=$HETZNER_SSH_KEY" >> $GITHUB_OUTPUT
+
+      - name: Set Docker tag
+        id: set_docker_tag
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          echo "tag=$SHORT_SHA" >> $GITHUB_OUTPUT
+
+      # 7) LOGIN TO ECR
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      # 8) BUILD AND PUSH DOCKER IMAGE
       - name: Build and push Docker image
         uses: docker/build-push-action@v4
         with:
           context: .
           platforms: linux/arm64
           push: true
-          tags: ${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }}
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/zkusd-containers:latest
+            ${{ steps.login-ecr.outputs.registry }}/zkusd-containers:${{ steps.set_docker_tag.outputs.tag }}
           build-args: |
             NODE_ENV=production
             NETWORK=devnet
             BLOCKCHECK_INTERVAL=10
-            MONGO_URI=${{ secrets.MONGO_URI }}
+            MONGO_URI=${{ env.MONGO_URI }}
             NUMBER_OF_ORACLES=3
-            DEVNET_ORACLE_1_PRIVATE_KEY=${{ secrets.DEVNET_ORACLE_1_PRIVATE_KEY }}
-            DEVNET_ORACLE_1_PUBLIC_KEY=${{ secrets.DEVNET_ORACLE_1_PUBLIC_KEY }}
-            DEVNET_ORACLE_2_PRIVATE_KEY=${{ secrets.DEVNET_ORACLE_2_PRIVATE_KEY }}
-            DEVNET_ORACLE_2_PUBLIC_KEY=${{ secrets.DEVNET_ORACLE_2_PUBLIC_KEY }}
-            DEVNET_ORACLE_3_PRIVATE_KEY=${{ secrets.DEVNET_ORACLE_3_PRIVATE_KEY }}
-            DEVNET_ORACLE_3_PUBLIC_KEY=${{ secrets.DEVNET_ORACLE_3_PUBLIC_KEY }}
-            DEVNET_ORACLE_DUMMY_PRIVATE_KEY=${{ secrets.DEVNET_ORACLE_DUMMY_PRIVATE_KEY }}
-            DEVNET_ORACLE_DUMMY_PUBLIC_KEY=${{ secrets.DEVNET_ORACLE_DUMMY_PUBLIC_KEY }}
+            DEVNET_ORACLE_1_PRIVATE_KEY=${{ env.DEVNET_ORACLE_1_PRIVATE_KEY }}
+            DEVNET_ORACLE_1_PUBLIC_KEY=${{ env.DEVNET_ORACLE_1_PUBLIC_KEY }}
+            DEVNET_ORACLE_2_PRIVATE_KEY=${{ env.DEVNET_ORACLE_2_PRIVATE_KEY }}
+            DEVNET_ORACLE_2_PUBLIC_KEY=${{ env.DEVNET_ORACLE_2_PUBLIC_KEY }}
+            DEVNET_ORACLE_3_PRIVATE_KEY=${{ env.DEVNET_ORACLE_3_PRIVATE_KEY }}
+            DEVNET_ORACLE_3_PUBLIC_KEY=${{ env.DEVNET_ORACLE_3_PUBLIC_KEY }}
+            DEVNET_ORACLE_DUMMY_PRIVATE_KEY=${{ env.DEVNET_ORACLE_DUMMY_PRIVATE_KEY }}
+            DEVNET_ORACLE_DUMMY_PUBLIC_KEY=${{ env.DEVNET_ORACLE_DUMMY_PUBLIC_KEY }}
 
   deploy:
     needs: build-and-push
     runs-on: ubuntu-latest
     steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: arn:aws:iam::565802942559:role/zkusd-services-github-actions-role
+          aws-region: eu-central-1
+
       - name: Deploy to Hetzner
         uses: appleboy/ssh-action@master
+        env:
+          AWS_ACCESS_KEY_ID: ${{ env.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          AWS_SESSION_TOKEN: ${{ env.AWS_SESSION_TOKEN }}
         with:
-          host: ${{ secrets.HETZNER_HOST }}
-          username: ${{ secrets.HETZNER_USERNAME }}
-          key: ${{ secrets.HETZNER_SSH_KEY }}
+          host: ${{ needs.build-and-push.outputs.hetzner_host }}
+          username: ${{ needs.build-and-push.outputs.hetzner_username }}
+          key: ${{ needs.build-and-push.outputs.hetzner_ssh_key }}
+          envs: AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_SESSION_TOKEN
           script: |
-            # Pull the latest image
-            if ! docker pull ${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }}; then
+            # 1) Install AWS CLI if not present (latest v2 version)
+            if ! command -v aws &> /dev/null; then
+              echo "Installing AWS CLI..."
+              apt-get update && apt-get install -y unzip curl
+              curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+              unzip awscliv2.zip
+              ./aws/install
+              export PATH=$PATH:/usr/local/bin
+            fi
+
+            # 2) Verify AWS CLI works
+            aws --version
+
+            # 3) ECR login
+            ECR_REGISTRY="${{ needs.build-and-push.outputs.ecr_registry }}"
+            echo "Logging into ECR registry: $ECR_REGISTRY"
+
+            aws ecr get-login-password --region eu-central-1 | docker login --username AWS --password-stdin $ECR_REGISTRY
+
+            # 4) Pull Docker image from ECR
+            ECR_IMAGE="$ECR_REGISTRY/zkusd-containers:${{ needs.build-and-push.outputs.docker_tag }}"
+            echo "Pulling Docker image: $ECR_IMAGE"
+
+            if ! docker pull "$ECR_IMAGE"; then
               echo "Failed to pull Docker image"
               exit 1
             fi
 
-            # Stop and remove the existing container
+            # 5) Stop and remove the existing container
+            echo "Stopping and removing old container..."
             docker stop zkusd-services-container || true
             docker rm zkusd-services-container || true
 
-            # Run the new container
+            # 6) Run the new container
+            echo "Starting new container from $ECR_IMAGE"
             if ! docker run -d \
               --name zkusd-services-container \
               --restart unless-stopped \
-              ${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }}; then
+              "$ECR_IMAGE"; then
               echo "Failed to start container"
               exit 1
             fi
 
-            # Verify container is running
-            if ! docker ps | grep zkusd-services-container; then
+            # 7) Verify container is running
+            echo "Verifying container is running..."
+            if ! docker ps | grep -q zkusd-services-container; then
               echo "Container is not running after deployment"
               exit 1
             fi
+
+            echo "✅ Deployment successful!"
