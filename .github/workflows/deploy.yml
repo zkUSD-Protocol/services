@@ -85,7 +85,7 @@ jobs:
 
           # SSH key for Hetzner
           HETZNER_SSH_KEY=$(aws secretsmanager get-secret-value \
-            --secret-id zkusd/dev/proof-generator/ssh/public-key-0CN5sh \
+            --secret-id zkusd/dev/proof-generator/ssh/public-key \
             --query SecretString --output text)
 
           # Mask them from logs
