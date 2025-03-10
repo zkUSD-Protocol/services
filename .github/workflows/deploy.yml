@@ -30,12 +30,11 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
 
-      - name: Configure AWS credentials
+      - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v3
         with:
           role-to-assume: arn:aws:iam::565802942559:role/zkusd-services-github-actions-role
           aws-region: eu-central-1
-
 
       - name: Download Terraform outputs
         run: aws s3 cp s3://zkusd-terraform-outputs/terraform-outputs.json terraform-outputs.json
@@ -57,68 +56,40 @@ jobs:
       - name: Fetch secret values
         id: fetch-secrets
         run: |
-          MONGO_URI=$(aws secretsmanager get-secret-value \
-            --secret-id zkusd/dev/mongo-uri \
-            --query SecretString --output text)
-
-          DEVNET_ORACLE_1_PRIVATE_KEY=$(aws secretsmanager get-secret-value \
-            --secret-id zkusd/dev/oracle-1/secret-key \
-            --query SecretString --output text)
-          DEVNET_ORACLE_1_PUBLIC_KEY=$(aws secretsmanager get-secret-value \
-            --secret-id zkusd/dev/oracle-1/public-key \
-            --query SecretString --output text)
-
-          DEVNET_ORACLE_2_PRIVATE_KEY=$(aws secretsmanager get-secret-value \
-            --secret-id zkusd/dev/oracle-2/secret-key \
-            --query SecretString --output text)
-          DEVNET_ORACLE_2_PUBLIC_KEY=$(aws secretsmanager get-secret-value \
-            --secret-id zkusd/dev/oracle-2/public-key \
-            --query SecretString --output text)
-
-          DEVNET_ORACLE_3_PRIVATE_KEY=$(aws secretsmanager get-secret-value \
-            --secret-id zkusd/dev/oracle-3/secret-key \
-            --query SecretString --output text)
-          DEVNET_ORACLE_3_PUBLIC_KEY=$(aws secretsmanager get-secret-value \
-            --secret-id zkusd/dev/oracle-3/public-key \
-            --query SecretString --output text)
-
-          DEVNET_ORACLE_DUMMY_PRIVATE_KEY=$(aws secretsmanager get-secret-value \
-            --secret-id zkusd/dev/oracle-dummy/secret-key \
-            --query SecretString --output text)
-          DEVNET_ORACLE_DUMMY_PUBLIC_KEY=$(aws secretsmanager get-secret-value \
-            --secret-id zkusd/dev/oracle-dummy/public-key \
-            --query SecretString --output text)
-
-          # SSH key for Hetzner
+          # SSH Key for Hetzner
           HETZNER_SSH_KEY=$(aws secretsmanager get-secret-value \
             --secret-id zkusd/dev/proof-generator/ssh/public-key \
             --query SecretString --output text)
 
-          # Mask them from logs
-          echo "::add-mask::$MONGO_URI"
-          echo "::add-mask::$DEVNET_ORACLE_1_PRIVATE_KEY"
-          echo "::add-mask::$DEVNET_ORACLE_1_PUBLIC_KEY"
-          echo "::add-mask::$DEVNET_ORACLE_2_PRIVATE_KEY"
-          echo "::add-mask::$DEVNET_ORACLE_2_PUBLIC_KEY"
-          echo "::add-mask::$DEVNET_ORACLE_3_PRIVATE_KEY"
-          echo "::add-mask::$DEVNET_ORACLE_3_PUBLIC_KEY"
-          echo "::add-mask::$DEVNET_ORACLE_DUMMY_PRIVATE_KEY"
-          echo "::add-mask::$DEVNET_ORACLE_DUMMY_PUBLIC_KEY"
           echo "::add-mask::$HETZNER_SSH_KEY"
-
-          # Export as environment variables (for Docker build)
-          echo "MONGO_URI=$MONGO_URI" >> $GITHUB_ENV
-          echo "DEVNET_ORACLE_1_PRIVATE_KEY=$DEVNET_ORACLE_1_PRIVATE_KEY" >> $GITHUB_ENV
-          echo "DEVNET_ORACLE_1_PUBLIC_KEY=$DEVNET_ORACLE_1_PUBLIC_KEY" >> $GITHUB_ENV
-          echo "DEVNET_ORACLE_2_PRIVATE_KEY=$DEVNET_ORACLE_2_PRIVATE_KEY" >> $GITHUB_ENV
-          echo "DEVNET_ORACLE_2_PUBLIC_KEY=$DEVNET_ORACLE_2_PUBLIC_KEY" >> $GITHUB_ENV
-          echo "DEVNET_ORACLE_3_PRIVATE_KEY=$DEVNET_ORACLE_3_PRIVATE_KEY" >> $GITHUB_ENV
-          echo "DEVNET_ORACLE_3_PUBLIC_KEY=$DEVNET_ORACLE_3_PUBLIC_KEY" >> $GITHUB_ENV
-          echo "DEVNET_ORACLE_DUMMY_PRIVATE_KEY=$DEVNET_ORACLE_DUMMY_PRIVATE_KEY" >> $GITHUB_ENV
-          echo "DEVNET_ORACLE_DUMMY_PUBLIC_KEY=$DEVNET_ORACLE_DUMMY_PUBLIC_KEY" >> $GITHUB_ENV
-
-          # Expose the SSH key as a step output for the next job
           echo "hetzner_ssh_key=$HETZNER_SSH_KEY" >> $GITHUB_OUTPUT
+
+          # Mongo URI
+          MONGO_URI=$(aws secretsmanager get-secret-value --secret-id zkusd/dev/mongo-uri --query SecretString --output text)
+          echo "::add-mask::$MONGO_URI"
+          echo "MONGO_URI=$MONGO_URI" >> $GITHUB_ENV
+
+          # Oracles 1 to 3
+          for i in 1 2 3; do
+            PRIVATE_KEY=$(aws secretsmanager get-secret-value --secret-id zkusd/dev/oracle-${i}/secret-key --query SecretString --output text)
+            PUBLIC_KEY=$(aws secretsmanager get-secret-value --secret-id zkusd/dev/oracle-${i}/public-key --query SecretString --output text)
+
+            echo "::add-mask::$PRIVATE_KEY"
+            echo "::add-mask::$PUBLIC_KEY"
+
+            echo "DEVNET_ORACLE_${i}_PRIVATE_KEY=$PRIVATE_KEY" >> $GITHUB_ENV
+            echo "DEVNET_ORACLE_${i}_PUBLIC_KEY=$PUBLIC_KEY" >> $GITHUB_ENV
+          done
+
+          # Dummy oracle keys
+          DUMMY_PRIVATE_KEY=$(aws secretsmanager get-secret-value --secret-id zkusd/dev/oracle-dummy/secret-key --query SecretString --output text)
+          DUMMY_PUBLIC_KEY=$(aws secretsmanager get-secret-value --secret-id zkusd/dev/oracle-dummy/public-key --query SecretString --output text)
+
+          echo "::add-mask::$DUMMY_PRIVATE_KEY"
+          echo "::add-mask::$DUMMY_PUBLIC_KEY"
+
+          echo "DEVNET_ORACLE_DUMMY_PRIVATE_KEY=$DUMMY_PRIVATE_KEY" >> $GITHUB_ENV
+          echo "DEVNET_ORACLE_DUMMY_PUBLIC_KEY=$DUMMY_PUBLIC_KEY" >> $GITHUB_ENV
 
       - name: Set Docker tag
         id: set_docker_tag
@@ -162,25 +133,29 @@ jobs:
     needs: build-and-push
     runs-on: ubuntu-latest
     steps:
-      - name: Configure AWS credentials
+      - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v3
         with:
           role-to-assume: arn:aws:iam::565802942559:role/zkusd-services-github-actions-role
           aws-region: eu-central-1
 
+      - name: Debug outputs from build-and-push (for verification, remove if not needed)
+        run: |
+          echo "HETZNER_HOST=${{ needs.build-and-push.outputs.hetzner_host }}"
+          echo "HETZNER_USERNAME=${{ needs.build-and-push.outputs.hetzner_username }}"
+          echo "HETZNER_SSH_KEY length=${{ needs.build-and-push.outputs.hetzner_ssh_key != '' && 'VALID' || 'EMPTY' }}"
+
       - name: Deploy to Hetzner
         uses: appleboy/ssh-action@master
-        env:
-          AWS_ACCESS_KEY_ID: ${{ env.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ env.AWS_SECRET_ACCESS_KEY }}
-          AWS_SESSION_TOKEN: ${{ env.AWS_SESSION_TOKEN }}
         with:
           host: ${{ needs.build-and-push.outputs.hetzner_host }}
           username: ${{ needs.build-and-push.outputs.hetzner_username }}
           key: ${{ needs.build-and-push.outputs.hetzner_ssh_key }}
           envs: AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_SESSION_TOKEN
           script: |
-            # 1) Install AWS CLI if not present (latest v2 version)
+            set -e
+
+            # 1) Install AWS CLI (v2) if not present
             if ! command -v aws &> /dev/null; then
               echo "Installing AWS CLI..."
               apt-get update && apt-get install -y unzip curl
