@@ -55,11 +55,14 @@ jobs:
           HETZNER_HOST=$(jq -r '.proof_generator_ip.value' terraform-outputs.json)
           HETZNER_USERNAME=$(jq -r '.proof_generator_username.value' terraform-outputs.json)
 
-          # Mask them from logs
+          echo "DEBUG: HETZNER_HOST=${HETZNER_HOST}"
+          echo "DEBUG: HETZNER_USERNAME=${HETZNER_USERNAME}"
+
+          # Mask them (so if they're not empty, they'd be redacted in logs)
           echo "::add-mask::$HETZNER_HOST"
           echo "::add-mask::$HETZNER_USERNAME"
 
-          # Expose as step outputs (so we can pass them to next job)
+          # Expose as step outputs
           echo "hetzner_host=$HETZNER_HOST" >> $GITHUB_OUTPUT
           echo "hetzner_username=$HETZNER_USERNAME" >> $GITHUB_OUTPUT
 
