@@ -160,11 +160,25 @@ jobs:
           script: |
             set -e
 
+            echo "Checking CPU architecture of Hetzner machine..."
+            uname -m
+
             # 1) Install AWS CLI (v2) if not present
             if ! command -v aws &> /dev/null; then
               echo "Installing AWS CLI..."
+
+              # Detect architecture dynamically (optional)
+              ARCH=$(uname -m)
+              if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+                echo "Detected ARM64 architecture"
+                AWS_CLI_URL="https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip"
+              else
+                echo "Detected x86_64 architecture"
+                AWS_CLI_URL="https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"
+              fi
+
               apt-get update && apt-get install -y unzip curl
-              curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "awscliv2.zip"
+              curl "$AWS_CLI_URL" -o "awscliv2.zip"
               unzip awscliv2.zip
               ./aws/install
               export PATH=$PATH:/usr/local/bin
