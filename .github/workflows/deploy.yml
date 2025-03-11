@@ -134,32 +134,28 @@ jobs:
           echo "hetzner_host=${HETZNER_HOST}" >> $GITHUB_OUTPUT
           echo "hetzner_username=${HETZNER_USERNAME}" >> $GITHUB_OUTPUT
 
-      - name: Fetch the proof-generator SSH key
+      - name: Fetch the proof-generator SSH key and save to a file
         id: fetch-ssh-key
         run: |
-          # SSH Key for Hetzner
           set +x  # Turn OFF debug tracing
 
-          HETZNER_SSH_KEY=$(aws secretsmanager get-secret-value \
+          PROOF_GENERATOR_SSH_SECRET=$(aws secretsmanager get-secret-value \
             --secret-id zkusd/dev/proof-generator/ssh/secret-key \
             --query SecretString --output text)
 
+          echo "${PROOF_GENERATOR_SSH_SECRET}" > /tmp/proof-generator-ssh-secret
+          chmod 600 /tmp/proof-generator-ssh-secret
 
-          echo "::add-mask::$HETZNER_SSH_KEY"
-          # Safe multi-line output to GITHUB_OUTPUT
-          {
-            echo "hetzner_ssh_key<<EOF"
-            echo "$HETZNER_SSH_KEY"
-            echo "EOF"
-          } >> $GITHUB_OUTPUT
-          set -x  # (Optional) Turn debug tracing back ON later
+          echo "proof-generator-ssh-secret-path=/tmp/proof-generator-ssh-secret" >> $GITHUB_OUTPUT
+
+          set -x
 
       - name: Deploy to Hetzner
         uses: appleboy/ssh-action@master
         with:
           host: ${{ steps.parse-outputs.outputs.hetzner_host }}
           username: ${{ steps.parse-outputs.outputs.hetzner_username }}
-          key: ${{ steps.fetch-ssh-key.outputs.hetzner_ssh_key }}
+          key_path: ${{ steps.fetch-ssh-key.outputs.proof-generator-ssh-secret-path }}
           envs: AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_SESSION_TOKEN
           script: |
             set -e
