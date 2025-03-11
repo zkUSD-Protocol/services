@@ -190,7 +190,44 @@ jobs:
             # 2) Verify AWS CLI works
             aws --version
 
-            # 3) ECR login
+            # 3) Install Docker if not present
+            if ! command -v docker &> /dev/null; then
+              echo "Docker not found. Installing Docker CE..."
+
+              apt-get update
+
+              # Prerequisites
+              apt-get install -y \
+                ca-certificates \
+                curl \
+                gnupg \
+                lsb-release
+
+              # Add Docker’s official GPG key
+              install -m 0755 -d /etc/apt/keyrings
+              curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+              chmod a+r /etc/apt/keyrings/docker.gpg
+
+              # Set up the Docker repository
+              ARCH=$(dpkg --print-architecture)
+              echo \
+                "deb [arch=$ARCH signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+                $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+              # Install Docker CE
+              apt-get update
+              apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+            fi
+
+            # 4) Ensure Docker service is running
+            echo "Ensuring Docker is running..."
+            systemctl enable docker
+            systemctl start docker
+
+            docker --version
+            docker info
+
+            # 5) ECR login
             ECR_REGISTRY="${{ needs.build-and-push.outputs.ecr_registry }}"
             echo "Logging into ECR registry: $ECR_REGISTRY"
 
@@ -201,7 +238,7 @@ jobs:
 
             aws ecr get-login-password --region eu-central-1 | docker login --username AWS --password-stdin $ECR_REGISTRY
 
-            # 4) Pull Docker image from ECR
+            # 6) Pull Docker image from ECR
             ECR_IMAGE="$ECR_REGISTRY/zkusd-containers:${{ needs.build-and-push.outputs.docker_tag }}"
             echo "Pulling Docker image: $ECR_IMAGE"
 
@@ -210,12 +247,12 @@ jobs:
               exit 1
             fi
 
-            # 5) Stop and remove the existing container
+            # 7) Stop and remove the existing container
             echo "Stopping and removing old container..."
             docker stop zkusd-services-container || true
             docker rm zkusd-services-container || true
 
-            # 6) Run the new container
+            # 8) Run the new container
             echo "Starting new container from $ECR_IMAGE"
             if ! docker run -d \
               --name zkusd-services-container \
@@ -225,7 +262,7 @@ jobs:
               exit 1
             fi
 
-            # 7) Verify container is running
+            # 9) Verify container is running
             echo "Verifying container is running..."
             if ! docker ps | grep -q zkusd-services-container; then
               echo "Container is not running after deployment"
