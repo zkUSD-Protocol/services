@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  id-token: write    # requesting the OIDC JWT token
+  id-token: write # requesting the OIDC JWT token
 
 jobs:
   build-and-push:
@@ -59,12 +59,12 @@ jobs:
           echo "DEBUG: HETZNER_USERNAME=${HETZNER_USERNAME}"
 
           # Mask them (so if they're not empty, they'd be redacted in logs)
-          echo "::add-mask::$HETZNER_HOST"
-          echo "::add-mask::$HETZNER_USERNAME"
+          echo "::add-mask::${HETZNER_HOST}"
+          echo "::add-mask::${HETZNER_USERNAME}"
 
           # Expose as step outputs
-          echo "hetzner_host=$HETZNER_HOST" >> $GITHUB_OUTPUT
-          echo "hetzner_username=$HETZNER_USERNAME" >> $GITHUB_OUTPUT
+          echo "hetzner_host=${HETZNER_HOST}" >> $GITHUB_OUTPUT
+          echo "hetzner_username=${HETZNER_USERNAME}" >> $GITHUB_OUTPUT
 
       - name: Fetch secret values
         id: fetch-secrets
@@ -187,8 +187,8 @@ jobs:
 
             INPUT_HOST="${{ needs.build-and-push.outputs.hetzner_host }}"
             INPUT_USERNAME="${{ needs.build-and-push.outputs.hetzner_username }}"
-            echo "HOST $HOST"
-            echo "USERNAMe $USERNAME"
+            echo "HOST $INPUT_HOST"
+            echo "USERNAME $INPUT_USERNAME"
 
             aws ecr get-login-password --region eu-central-1 | docker login --username AWS --password-stdin $ECR_REGISTRY
 
