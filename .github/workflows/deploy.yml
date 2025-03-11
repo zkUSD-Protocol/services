@@ -185,6 +185,11 @@ jobs:
             ECR_REGISTRY="${{ needs.build-and-push.outputs.ecr_registry }}"
             echo "Logging into ECR registry: $ECR_REGISTRY"
 
+            INPUT_HOST="${{ needs.build-and-push.outputs.hetzner_host }}"
+            INPUT_USERNAME="${{ needs.build-and-push.outputs.hetzner_username }}"
+            echo "HOST $HOST"
+            echo "USERNAMe $USERNAME"
+
             aws ecr get-login-password --region eu-central-1 | docker login --username AWS --password-stdin $ECR_REGISTRY
 
             # 4) Pull Docker image from ECR
