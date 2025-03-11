@@ -16,10 +16,6 @@ jobs:
       ecr_registry: ${{ steps.login-ecr.outputs.registry }}
       docker_tag: ${{ steps.set_docker_tag.outputs.tag }}
 
-      hetzner_host: ${{ steps.parse-outputs.outputs.hetzner_host }}
-      hetzner_username: ${{ steps.parse-outputs.outputs.hetzner_username }}
-      hetzner_ssh_key: ${{ steps.fetch-secrets.outputs.hetzner_ssh_key }}
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -35,36 +31,6 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::565802942559:role/zkusd-services-github-actions-role
           aws-region: eu-central-1
-
-      - name: Download Terraform outputs
-        run: aws s3 cp s3://zkusd-terraform-outputs/terraform-outputs.json terraform-outputs.json
-
-      - name: Debug TF file
-        run: |
-          echo "==== Dumping terraform-outputs.json ===="
-          cat terraform-outputs.json
-          echo "==== Testing with jq ===="
-          echo "proof_generator_ip:"
-          jq -r '.proof_generator_ip.value' terraform-outputs.json
-          echo "proof_generator_username:"
-          jq -r '.proof_generator_username.value' terraform-outputs.json
-
-      - name: Parse Terraform outputs
-        id: parse-outputs
-        run: |
-          HETZNER_HOST=$(jq -r '.proof_generator_ip.value' terraform-outputs.json)
-          HETZNER_USERNAME=$(jq -r '.proof_generator_username.value' terraform-outputs.json)
-
-          echo "DEBUG: HETZNER_HOST=${HETZNER_HOST}"
-          echo "DEBUG: HETZNER_USERNAME=${HETZNER_USERNAME}"
-
-          # Mask them (so if they're not empty, they'd be redacted in logs)
-          echo "::add-mask::$HETZNER_HOST"
-          echo "::add-mask::$HETZNER_USERNAME"
-
-          # Expose as step outputs
-          echo "hetzner_host=$HETZNER_HOST" >> $GITHUB_OUTPUT
-          echo "hetzner_username=$HETZNER_USERNAME" >> $GITHUB_OUTPUT
 
       - name: Fetch secret values
         id: fetch-secrets
@@ -152,18 +118,39 @@ jobs:
           role-to-assume: arn:aws:iam::565802942559:role/zkusd-services-github-actions-role
           aws-region: eu-central-1
 
-      - name: Debug outputs from build-and-push (for verification, remove if not needed)
+      - name: Download Terraform outputs
+        run: aws s3 cp s3://zkusd-terraform-outputs/terraform-outputs.json terraform-outputs.json
+      - name: Parse Terraform outputs
+        id: parse-outputs
         run: |
-          echo "HETZNER_HOST=${{ needs.build-and-push.outputs.hetzner_host }}"
-          echo "HETZNER_USERNAME=${{ needs.build-and-push.outputs.hetzner_username }}"
-          echo "HETZNER_SSH_KEY length=${{ needs.build-and-push.outputs.hetzner_ssh_key != '' && 'VALID' || 'EMPTY' }}"
+          HETZNER_HOST=$(jq -r '.proof_generator_ip.value' terraform-outputs.json)
+          HETZNER_USERNAME=$(jq -r '.proof_generator_username.value' terraform-outputs.json)
+
+          # Mask them (so if they're not empty, they'd be redacted in logs)
+          echo "::add-mask::${HETZNER_HOST}"
+          echo "::add-mask::${HETZNER_USERNAME}"
+
+          # Expose as step outputs
+          echo "hetzner_host=${HETZNER_HOST}" >> $GITHUB_OUTPUT
+          echo "hetzner_username=${HETZNER_USERNAME}" >> $GITHUB_OUTPUT
+
+      - name: Fetch the proof-generator SSH key
+        id: fetch-ssh-key
+        run: |
+          # SSH Key for Hetzner
+          HETZNER_SSH_KEY=$(aws secretsmanager get-secret-value \
+            --secret-id zkusd/dev/proof-generator/ssh/secret-key \
+            --query SecretString --output text)
+
+          echo "::add-mask::$HETZNER_SSH_KEY"
+          echo "hetzner_ssh_key=$HETZNER_SSH_KEY" >> $GITHUB_OUTPUT
 
       - name: Deploy to Hetzner
         uses: appleboy/ssh-action@master
         with:
-          host: ${{ needs.build-and-push.outputs.hetzner_host }}
-          username: ${{ needs.build-and-push.outputs.hetzner_username }}
-          key: ${{ needs.build-and-push.outputs.hetzner_ssh_key }}
+          host: ${{ steps.parse-outputs.outputs.hetzner_host }}
+          username: ${{ steps.parse-outputs.outputs.hetzner_username }}
+          key: ${{ steps.fetch-ssh-key.outputs.hetzner_ssh_key }}
           envs: AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_SESSION_TOKEN
           script: |
             set -e
@@ -185,10 +172,10 @@ jobs:
             ECR_REGISTRY="${{ needs.build-and-push.outputs.ecr_registry }}"
             echo "Logging into ECR registry: $ECR_REGISTRY"
 
-            INPUT_HOST="${{ needs.build-and-push.outputs.hetzner_host }}"
-            INPUT_USERNAME="${{ needs.build-and-push.outputs.hetzner_username }}"
-            echo "HOST $HOST"
-            echo "USERNAMe $USERNAME"
+            INPUT_HOST="${{ steps.parse-outputs.outputs.hetzner_host }}"
+            INPUT_USERNAME="${{ steps.parse-outputs.outputs.hetzner_username }}"
+            echo "HOST $INPUT_HOST"
+            echo "USERNAME $INPUT_USERNAME"
 
             aws ecr get-login-password --region eu-central-1 | docker login --username AWS --password-stdin $ECR_REGISTRY
 
