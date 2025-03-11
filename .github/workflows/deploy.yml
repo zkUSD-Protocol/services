@@ -178,9 +178,12 @@ jobs:
               fi
 
               apt-get update && apt-get install -y unzip curl
+
+              rm -rf aws awscliv2.zip
               curl "$AWS_CLI_URL" -o "awscliv2.zip"
-              unzip awscliv2.zip
+              unzip -o awscliv2.zip
               ./aws/install
+
               export PATH=$PATH:/usr/local/bin
             fi
 
