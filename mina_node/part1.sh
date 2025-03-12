@@ -95,26 +95,16 @@ SECRET_ACCESS_KEY="$(echo "${STS_JSON}" | jq -r .Credentials.SecretAccessKey)"
 SESSION_TOKEN="$(echo "${STS_JSON}" | jq -r .Credentials.SessionToken)"
 EXPIRATION="$(echo "${STS_JSON}" | jq -r .Credentials.Expiration)"
 
-# echo "[INFO] Creating local AWS credentials file: ${LOCAL_CREDS_FILE}"
-cat <<EOF > "${LOCAL_CREDS_FILE}"
-[default]
-aws_access_key_id = ${ACCESS_KEY_ID}
-aws_secret_access_key = ${SECRET_ACCESS_KEY}
-aws_session_token = ${SESSION_TOKEN}
-region = ${AWS_REGION}
-EOF
+echo "[INFO] Temporary AWS STS credentials expire at: ${EXPIRATION}, but are only available for executing part2 and part3."
 
-chmod 600 "${LOCAL_CREDS_FILE}"
-echo "[INFO] Temporary AWS STS credentials expire at: ${EXPIRATION}"
-
-### 5) COPY CREDENTIALS & PART2 SCRIPT TO REMOTE MACHINE
+### 5) COPY PART2 SCRIPT TO REMOTE MACHINE
 if [ ! -f "${NEXT_SCRIPT_PATH}" ]; then
   echo "[ERROR] Next script '${NEXT_SCRIPT_PATH}' is missing. Please ensure it exists."
   exit 1
 fi
 
 echo "------------------------------"
-echo "[INFO] Copying STS credentials and part2 script to the remote Hetzner machine..."
+echo "[INFO] Copying part2 script to the remote Hetzner machine..."
 
 scp -i "${TEMP_SSH_PRIVATE_KEY}" -o StrictHostKeyChecking=no \
   "${NEXT_SCRIPT_PATH}" \
@@ -122,7 +112,6 @@ scp -i "${TEMP_SSH_PRIVATE_KEY}" -o StrictHostKeyChecking=no \
 
 ### 6) VERIFY SSH CONNECTIVITY
 echo "------------------------------"
-echo "[INFO] Verifying SSH connectivity to ${MINA_NODE_USERNAME}@${MINA_NODE_IP} ..."
 ssh -i "${TEMP_SSH_PRIVATE_KEY}" -o StrictHostKeyChecking=no \
   "${MINA_NODE_USERNAME}@${MINA_NODE_IP}" "echo '✅ SSH connection successful! Remote machine architecture: $(uname -m)'"
 
@@ -131,13 +120,12 @@ echo "✅ Part 1 completed successfully!"
 echo "Proceed to run Part 2 on the remote server."
 
 echo "------------------------------"
-echo "[INFO] Preparing to run Part 2 on the remote host..."
-
 # Run part2.sh remotely over SSH
-echo "[INFO] Executing 'part2.sh' on remote host: ${MINA_NODE_USERNAME}@${MINA_NODE_IP}..."
+echo "[INFO] Executing 'part2.sh' on the remote host."
 
 ssh -i "${TEMP_SSH_PRIVATE_KEY}" -o StrictHostKeyChecking=no \
-    "${MINA_NODE_USERNAME}@${MINA_NODE_IP}" "chmod +x ~/part2.sh && bash ~/part2.sh"
+    "${MINA_NODE_USERNAME}@${MINA_NODE_IP}" \
+    "AWS_ACCESS_KEY_ID=${ACCESS_KEY_ID} AWS_SECRET_ACCESS_KEY=${SECRET_ACCESS_KEY} AWS_SESSION_TOKEN=${SESSION_TOKEN} bash ~/part2.sh"
 
 # Capture the exit status of part2.sh remotely
 SSH_EXIT_STATUS=$?
@@ -162,11 +150,13 @@ if [ $COPY_EXIT_STATUS -ne 0 ]; then
     exit $COPY_EXIT_STATUS
 fi
 
-echo "[INFO] Successfully copied 'part3.sh'. Preparing to execute it remotely..."
+echo "[INFO] Successfully copied 'part3.sh'. Executing it remotely..."
 
 # Run part3.sh remotely over SSH
 ssh -i "${TEMP_SSH_PRIVATE_KEY}" -o StrictHostKeyChecking=no \
-    "${MINA_NODE_USERNAME}@${MINA_NODE_IP}" "chmod +x ~/part3.sh && bash ~/part3.sh"
+    "${MINA_NODE_USERNAME}@${MINA_NODE_IP}" \
+    "AWS_ACCESS_KEY_ID=${ACCESS_KEY_ID} AWS_SECRET_ACCESS_KEY=${SECRET_ACCESS_KEY} AWS_SESSION_TOKEN=${SESSION_TOKEN} bash ~/part3.sh"
+
 
 # Capture the exit status of part3.sh remotely
 SSH_EXIT_STATUS=$?

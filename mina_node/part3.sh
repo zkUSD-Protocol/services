@@ -2,27 +2,24 @@
 set -euo pipefail
 
 ################################################################################
-# Part 3: Mina Block-Producing Node Setup (AMD64 Only)
-#
-# - Bails out if not x86_64 architecture
-# - Checks if Mina node is already running via systemd/docker
-# - Fetches block producer key from AWS Secrets Manager (STS validation included)
-# - Sets up a systemd unit to manage the mina-daemon docker container
-# - Idempotent: Skips steps when not needed
+# Mina Block-Producing Node Setup (AMD64 Only)
 ################################################################################
 
-AWS_REGION="eu-central-1"
-BLOCK_PRODUCER_SECRET_NAME="zkusd/dev/mina-node/block-producer-key"
-
-# Paths and files
-MINA_KEYS_DIR="${HOME}/.mina-config/keys"
-MINA_KEYFILE="${MINA_KEYS_DIR}/my-wallet"
-MINA_CONFIG_DIR="${HOME}/.mina-config"
-
-# Docker image to use (focal or bullseye - you're free to change)
+# Variables
 MINA_IMAGE="minaprotocol/mina-daemon:3.0.3.1-cc59a03-focal-mainnet"
+AWS_REGION="eu-central-1"
+COMBINED_SECRET_NAME="zkusd/dev/mina-node/block-producer-keys"
 
-# Systemd
+S3_BUCKET="zkusd-dev-configs"
+DAEMON_CONFIG_S3_PATH="mina-node/mina-daemon.json"
+
+# Paths
+MINA_CONFIG_DIR="${HOME}/.mina-config"
+MINA_KEYS_DIR="${MINA_CONFIG_DIR}/keys"
+MINA_KEYFILE="${MINA_KEYS_DIR}/my-wallet"
+DAEMON_CONFIG_LOCAL="${MINA_CONFIG_DIR}/daemon.json"
+
+# Systemd variables
 SYSTEMD_SERVICE_NAME="mina-node"
 SYSTEMD_SERVICE_FILE="/etc/systemd/system/${SYSTEMD_SERVICE_NAME}.service"
 
@@ -31,105 +28,107 @@ SYSTEMD_SERVICE_FILE="/etc/systemd/system/${SYSTEMD_SERVICE_NAME}.service"
 ################################################################################
 echo "------------------------------"
 echo "[INFO] Checking system architecture..."
-
 ARCH=$(uname -m)
 if [[ "${ARCH}" != "x86_64" ]]; then
   echo "[ERROR] This script is for AMD64/x86_64 only! Detected arch='${ARCH}'. Exiting."
   exit 1
 fi
-
 echo "[INFO] Architecture is x86_64. Proceeding..."
 
 ################################################################################
-# 1) Check if Mina Node is Already Running
+# 1) Ensure Directories and Mount tmpfs for Keys
 ################################################################################
 echo "------------------------------"
-echo "[INFO] Checking if Mina node is already running..."
+echo "[INFO] Setting up directories and mounting tmpfs if necessary..."
+mkdir -p "$MINA_KEYS_DIR"
+mkdir -p "$MINA_CONFIG_DIR"
+
+if ! mountpoint -q "$MINA_KEYS_DIR"; then
+    echo "[INFO] Mounting tmpfs at ${MINA_KEYS_DIR}..."
+    sudo mount -t tmpfs -o size=1M,uid=$(id -u),gid=$(id -g),mode=0700 tmpfs "$MINA_KEYS_DIR"
+fi
+
+chmod 700 "$MINA_KEYS_DIR"
+
+################################################################################
+# 2) Stop & Remove Existing Mina Node (if any)
+################################################################################
+echo "------------------------------"
+echo "[INFO] Stopping and removing any existing Mina node container or service..."
 
 if systemctl is-active --quiet "${SYSTEMD_SERVICE_NAME}"; then
-  echo "[INFO] Systemd service '${SYSTEMD_SERVICE_NAME}' is already active. Idempotent exit."
-  exit 0
+  echo "[INFO] Stopping systemd service '${SYSTEMD_SERVICE_NAME}'..."
+  sudo systemctl stop "${SYSTEMD_SERVICE_NAME}"
 fi
 
-if docker ps --format '{{.Names}}' | grep -q '^mina-daemon$'; then
-  echo "[INFO] A container named 'mina-daemon' is running without systemd. Skipping to avoid conflict."
-  exit 0
+if docker ps -a --format '{{.Names}}' | grep -q '^mina-daemon$'; then
+    echo "[INFO] Removing existing Docker container 'mina-daemon'..."
+    docker stop mina-daemon
+    docker rm -f mina-daemon || true
 fi
-
-echo "[INFO] Mina node is not running. Proceeding with setup..."
 
 ################################################################################
-# 2) Verify AWS CLI Credentials & Fetch Block Producer Key
+# 3) Verify AWS CLI Credentials & Fetch Combined Secret
 ################################################################################
 echo "------------------------------"
-echo "[INFO] Verifying AWS CLI credentials before attempting secrets fetch..."
-
+echo "[INFO] Verifying AWS CLI credentials..."
 if ! timeout 10 aws sts get-caller-identity --region "${AWS_REGION}" >/dev/null 2>&1; then
   echo "[ERROR] AWS CLI credentials are invalid or expired. Aborting setup!"
   exit 1
 fi
-
 echo "[INFO] AWS credentials verified."
 
-if [[ ! -f "${MINA_KEYFILE}" ]]; then
-  echo "[INFO] Block producer key not found at '${MINA_KEYFILE}'. Fetching from Secrets Manager..."
+echo "[INFO] Fetching combined block producer secrets from AWS Secrets Manager..."
+COMBINED_SECRET_JSON=$(aws secretsmanager get-secret-value \
+  --region "$AWS_REGION" \
+  --secret-id "$COMBINED_SECRET_NAME" \
+  --query SecretString \
+  --output text)
 
-  mkdir -p "${MINA_KEYS_DIR}"
-  chmod 700 "${MINA_KEYS_DIR}"
-
-  BLOCK_PRODUCER_SECRET_ARN=$(aws secretsmanager list-secrets \
-    --region "${AWS_REGION}" \
-    --cli-connect-timeout 1 \
-    --query "SecretList[?Name=='${BLOCK_PRODUCER_SECRET_NAME}'].ARN | [0]" \
-    --output text | grep -v None | head -n 1)
-
-  if [[ -z "${BLOCK_PRODUCER_SECRET_ARN}" ]]; then
-      echo "[ERROR] Could not find secret '${BLOCK_PRODUCER_SECRET_NAME}' in Secrets Manager!"
-      exit 1
-  fi
-
-  echo "[INFO] Found secret ARN: ${BLOCK_PRODUCER_SECRET_ARN}. Fetching secret..."
-
-  if ! timeout 15 aws secretsmanager get-secret-value \
-       --secret-id "${BLOCK_PRODUCER_SECRET_ARN}" \
-       --region "${AWS_REGION}" \
-    --cli-connect-timeout 1 \
-    --query SecretString \
-    --output text > "${MINA_KEYFILE}"; then
-    echo "[ERROR] Failed to fetch block producer key from Secrets Manager!"
-    exit 1
-  fi
-
-  chmod 600 "${MINA_KEYFILE}"
-  echo "[INFO] Block producer key successfully placed at '${MINA_KEYFILE}'."
-else
-  echo "[INFO] Block producer key already exists at '${MINA_KEYFILE}'."
-fi
+BLOCK_PRODUCER_KEY=$(echo "$COMBINED_SECRET_JSON" | jq -r '.block_producer_key')
+BLOCK_PRODUCER_PASSWORD=$(echo "$COMBINED_SECRET_JSON" | jq -r '.block_producer_password')
+BLOCK_PRODUCER_PUBLIC_KEY=$(echo "$COMBINED_SECRET_JSON" | jq -r '.block_producer_public_key')
 
 ################################################################################
-# 3) Check Docker Image Presence
+# 4) Write Private Key to File
 ################################################################################
 echo "------------------------------"
-echo "[INFO] Checking Docker image '${MINA_IMAGE}'..."
-
-IMAGE_EXISTS=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -c "^${MINA_IMAGE}$" || true)
-
-if [[ "${IMAGE_EXISTS}" -gt 0 ]]; then
-  echo "[INFO] Docker image '${MINA_IMAGE}' already exists locally. Skipping pull."
-else
-  echo "[INFO] Docker image '${MINA_IMAGE}' not found. Pulling..."
-  docker pull "${MINA_IMAGE}" || { echo "[ERROR] Failed to pull docker image!"; exit 1; }
-  echo "[INFO] Docker image pulled successfully."
-fi
+echo "[INFO] Writing block producer private key to ${MINA_KEYFILE}..."
+echo "$BLOCK_PRODUCER_KEY" > "${MINA_KEYFILE}"
+chmod 600 "${MINA_KEYFILE}"
 
 ################################################################################
-# 4) Create systemd Service for Mina Node
+# 5) Download and Populate mina-daemon.json
 ################################################################################
 echo "------------------------------"
-echo "[INFO] Setting up systemd service '${SYSTEMD_SERVICE_NAME}'..."
+echo "[INFO] Downloading mina-daemon.json from S3 bucket ${S3_BUCKET}..."
+aws s3 cp "s3://${S3_BUCKET}/${DAEMON_CONFIG_S3_PATH}" "${DAEMON_CONFIG_LOCAL}" --region "${AWS_REGION}"
 
-if [[ ! -f "${SYSTEMD_SERVICE_FILE}" ]]; then
-  cat <<EOF | sudo tee "${SYSTEMD_SERVICE_FILE}" > /dev/null
+jq --arg key "${MINA_KEYFILE}" \
+   --arg pass "${BLOCK_PRODUCER_PASSWORD}" \
+   --arg pub "${BLOCK_PRODUCER_PUBLIC_KEY}" \
+   '
+   .daemon["block-producer-key"] = $key |
+   .daemon["block-producer-password"] = $pass |
+   .daemon["block-producer-pubkey"] = $pub |
+   .daemon["coinbase-receiver"] = $pub
+   ' "${DAEMON_CONFIG_LOCAL}" > "${DAEMON_CONFIG_LOCAL}.tmp" && mv "${DAEMON_CONFIG_LOCAL}.tmp" "${DAEMON_CONFIG_LOCAL}"
+
+################################################################################
+# 6) Update Docker Image
+################################################################################
+echo "------------------------------"
+echo "[INFO] Pulling latest Docker image '${MINA_IMAGE}'..."
+docker pull "${MINA_IMAGE}" || { echo "[ERROR] Failed to pull docker image!"; exit 1; }
+echo "[INFO] Docker image updated."
+
+################################################################################
+# 7) Create or Update systemd Service for Mina Node
+################################################################################
+echo "------------------------------"
+echo "[INFO] Creating/updating systemd service '${SYSTEMD_SERVICE_NAME}'..."
+
+read -r -d '' SYSTEMD_UNIT <<EOF || true
 [Unit]
 Description=Mina Block Producer Node
 After=docker.service
@@ -137,18 +136,11 @@ Requires=docker.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/docker run \\
-  --name mina-daemon \\
-  --network host \\
-  --restart unless-stopped \\
+ExecStart=/usr/bin/docker run --name mina-daemon --network host --restart unless-stopped \\
   -v ${MINA_KEYS_DIR}:/root/.mina-config/keys:ro \\
   -v ${MINA_CONFIG_DIR}:/root/.mina-config \\
-  ${MINA_IMAGE} \\
-  daemon \\
-    --peer-list-url https://storage.googleapis.com/mina-seed-lists/mainnet_seeds.txt \\
-    --external-port 8302 \\
-    --rest-port 3085 \\
-    --block-producer-key /root/.mina-config/keys/my-wallet
+  ${MINA_IMAGE} daemon \\
+    --config-file /root/.mina-config/daemon.json
 
 ExecStop=/usr/bin/docker stop mina-daemon
 ExecStopPost=/usr/bin/docker rm -f mina-daemon
@@ -160,40 +152,26 @@ RestartSec=10
 WantedBy=multi-user.target
 EOF
 
-  echo "[INFO] Systemd service file created at '${SYSTEMD_SERVICE_FILE}'."
-else
-  echo "[INFO] Systemd service file already exists. Skipping creation."
-fi
+echo "$SYSTEMD_UNIT" | sudo tee "${SYSTEMD_SERVICE_FILE}" > /dev/null
+echo "[INFO] Systemd service file updated at '${SYSTEMD_SERVICE_FILE}'."
 
 ################################################################################
-# 5) Start & Enable the Mina Node Service
+# 8) Reload systemd, Enable and Start the Service
 ################################################################################
 echo "------------------------------"
-echo "[INFO] Reloading systemd daemon and enabling service..."
-
+echo "[INFO] Reloading systemd daemon..."
 sudo systemctl daemon-reload
 
-if ! systemctl is-enabled --quiet "${SYSTEMD_SERVICE_NAME}"; then
-  echo "[INFO] Enabling service '${SYSTEMD_SERVICE_NAME}'..."
-  sudo systemctl enable "${SYSTEMD_SERVICE_NAME}"
-else
-  echo "[INFO] Service '${SYSTEMD_SERVICE_NAME}' already enabled."
-fi
-
-if ! systemctl is-active --quiet "${SYSTEMD_SERVICE_NAME}"; then
-  echo "[INFO] Starting service '${SYSTEMD_SERVICE_NAME}'..."
-  sudo systemctl start "${SYSTEMD_SERVICE_NAME}"
-else
-  echo "[INFO] Service '${SYSTEMD_SERVICE_NAME}' already active."
-fi
+echo "[INFO] Enabling and starting systemd service '${SYSTEMD_SERVICE_NAME}'..."
+sudo systemctl enable "${SYSTEMD_SERVICE_NAME}" --now
+sudo systemctl restart "${SYSTEMD_SERVICE_NAME}"
 
 ################################################################################
-# 6) Verify & Report Status
+# 9) Verify & Report Status
 ################################################################################
 echo "------------------------------"
 echo "[INFO] Verifying service status..."
-
-sleep 5  # Give it a few seconds to initialize
+sleep 5
 
 if systemctl is-active --quiet "${SYSTEMD_SERVICE_NAME}"; then
   echo "[INFO] Mina node systemd service '${SYSTEMD_SERVICE_NAME}' is running."
@@ -210,7 +188,7 @@ echo "[INFO] Running 'mina client status' inside the container..."
 docker exec mina-daemon mina client status || echo "[WARN] 'mina client status' failed. Check sync state manually."
 
 ################################################################################
-# 7) Done
+# 10) Done
 ################################################################################
 echo "------------------------------"
 echo "✅ Mina block-producing node setup complete!"
