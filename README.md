@@ -20,7 +20,7 @@ You must be able to assume the necessary AWS role.
 Use the setup script to initialize the Mina node instance:
 
 ```bash
-    sh part1.sh
+    sh setup.sh
 ```
 
 ### 🔐 SSH Interaction with the Mina Node
@@ -36,6 +36,14 @@ Use the setup script to initialize the Mina node instance:
 2. **Execute a remote command on the Mina node**
    Pass a command to be executed remotely on the node:
 
+To see the mina client status
 ```bash
     ./ssh.sh mina client status
 ```
+
+To see the node's logs
+```bash
+    ./ssh.sh tail -f /var/log/mina-node/mina-node.log
+```
+
+
