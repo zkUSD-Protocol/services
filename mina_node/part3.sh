@@ -15,8 +15,10 @@ DAEMON_CONFIG_S3_PATH="mina-node/mina-daemon.json"
 
 # Paths
 MINA_CONFIG_DIR="${HOME}/.mina-config"
+MINA_CONFIG_DIR="${HOME}/.mina-config"
 MINA_KEYS_DIR="${MINA_CONFIG_DIR}/keys"
 MINA_KEYFILE="${MINA_KEYS_DIR}/my-wallet"
+DOCKER_KEYFILE="/root/.mina-config/keys/my-wallet"
 DAEMON_CONFIG_LOCAL="${MINA_CONFIG_DIR}/daemon.json"
 
 # Systemd variables
@@ -104,13 +106,12 @@ echo "------------------------------"
 echo "[INFO] Downloading mina-daemon.json from S3 bucket ${S3_BUCKET}..."
 aws s3 cp "s3://${S3_BUCKET}/${DAEMON_CONFIG_S3_PATH}" "${DAEMON_CONFIG_LOCAL}" --region "${AWS_REGION}"
 
-jq --arg key "${MINA_KEYFILE}" \
+jq --arg key "${DOCKER_KEYFILE}" \
    --arg pass "${BLOCK_PRODUCER_PASSWORD}" \
    --arg pub "${BLOCK_PRODUCER_PUBLIC_KEY}" \
    '
    .daemon["block-producer-key"] = $key |
    .daemon["block-producer-password"] = $pass |
-   .daemon["block-producer-pubkey"] = $pub |
    .daemon["coinbase-receiver"] = $pub
    ' "${DAEMON_CONFIG_LOCAL}" > "${DAEMON_CONFIG_LOCAL}.tmp" && mv "${DAEMON_CONFIG_LOCAL}.tmp" "${DAEMON_CONFIG_LOCAL}"
 
