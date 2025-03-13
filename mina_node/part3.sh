@@ -140,7 +140,9 @@ Type=simple
 ExecStart=/usr/bin/docker run --name mina-daemon --network host --restart unless-stopped \\
   -v ${MINA_KEYS_DIR}:/root/.mina-config/keys:ro \\
   -v ${MINA_CONFIG_DIR}:/root/.mina-config \\
+  -e MINA_NETWORK=devnet \\
   ${MINA_IMAGE} daemon \\
+    --external-ip 188.245.34.82 \\
     --config-file /root/.mina-config/daemon.json
 
 ExecStop=/usr/bin/docker stop mina-daemon
