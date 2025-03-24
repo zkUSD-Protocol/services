@@ -48,17 +48,20 @@ jobs:
           echo "::add-mask::$MONGO_URI"
           echo "MONGO_URI=$MONGO_URI" >> $GITHUB_ENV
 
-          # Oracles 1 to 3
-          for i in 1 2 3; do
-            PRIVATE_KEY=$(aws secretsmanager get-secret-value --secret-id zkusd/dev/oracle-${i}/secret-key --query SecretString --output text)
-            PUBLIC_KEY=$(aws secretsmanager get-secret-value --secret-id zkusd/dev/oracle-${i}/public-key --query SecretString --output text)
+          # Oracle Public Keys And Endpoints
+          ORACLE_1_PUBLIC_KEY=B62qrYmswnMHuSg8wzeQBYu3fFC2bY2QN8G9d3x4unTkA33oC917nbF
+          ORACLE_1_ENDPOINT=http://188.245.71.94:3337/api/price
+          ORACLE_2_PUBLIC_KEY=B62qjnCpbdT1yP3SPTczLkM4QwKu2y5GxonpYm2kjkvTQ38Ck2Lhmeo
+          ORACLE_2_ENDPOINT=http://167.235.79.145:3337/api/price
+          ORACLE_3_PUBLIC_KEY=B62qrrhbuYP5UxWbhdL9FHTGfeAERjx8ofCjQPUVS9cfQ9ijR8PrvAk
+          ORACLE_3_ENDPOINT=http://128.140.78.73:3337/api/price
 
-            echo "::add-mask::$PRIVATE_KEY"
-            echo "::add-mask::$PUBLIC_KEY"
-
-            echo "DEVNET_ORACLE_${i}_PRIVATE_KEY=$PRIVATE_KEY" >> $GITHUB_ENV
-            echo "DEVNET_ORACLE_${i}_PUBLIC_KEY=$PUBLIC_KEY" >> $GITHUB_ENV
-          done
+          echo "ORACLE_1_PUBLIC_KEY=$ORACLE_1_PUBLIC_KEY" >> $GITHUB_ENV
+          echo "ORACLE_1_ENDPOINT=$ORACLE_1_ENDPOINT" >> $GITHUB_ENV
+          echo "ORACLE_2_PUBLIC_KEY=$ORACLE_2_PUBLIC_KEY" >> $GITHUB_ENV
+          echo "ORACLE_2_ENDPOINT=$ORACLE_2_ENDPOINT" >> $GITHUB_ENV
+          echo "ORACLE_3_PUBLIC_KEY=$ORACLE_3_PUBLIC_KEY" >> $GITHUB_ENV
+          echo "ORACLE_3_ENDPOINT=$ORACLE_3_ENDPOINT" >> $GITHUB_ENV
 
           # Dummy oracle keys
           DUMMY_PRIVATE_KEY=$(aws secretsmanager get-secret-value --secret-id zkusd/dev/oracle-dummy/secret-key --query SecretString --output text)
@@ -67,8 +70,8 @@ jobs:
           echo "::add-mask::$DUMMY_PRIVATE_KEY"
           echo "::add-mask::$DUMMY_PUBLIC_KEY"
 
-          echo "DEVNET_ORACLE_DUMMY_PRIVATE_KEY=$DUMMY_PRIVATE_KEY" >> $GITHUB_ENV
-          echo "DEVNET_ORACLE_DUMMY_PUBLIC_KEY=$DUMMY_PUBLIC_KEY" >> $GITHUB_ENV
+          echo "ORACLE_DUMMY_PRIVATE_KEY=$DUMMY_PRIVATE_KEY" >> $GITHUB_ENV
+          echo "ORACLE_DUMMY_PUBLIC_KEY=$DUMMY_PUBLIC_KEY" >> $GITHUB_ENV
 
       - name: Set Docker tag
         id: set_docker_tag
@@ -91,22 +94,22 @@ jobs:
           platforms: linux/arm64
           push: true
           tags: |
-            ${{ steps.login-ecr.outputs.registry }}/zkusd-containers:latest
-            ${{ steps.login-ecr.outputs.registry }}/zkusd-containers:${{ steps.set_docker_tag.outputs.tag }}
+            ${{ steps.login-ecr.outputs.registry }}/zkusd-services:latest
+            ${{ steps.login-ecr.outputs.registry }}/zkusd-services:${{ steps.set_docker_tag.outputs.tag }}
           build-args: |
             NODE_ENV=production
             NETWORK=devnet
             BLOCKCHECK_INTERVAL=10
             MONGO_URI=${{ env.MONGO_URI }}
             NUMBER_OF_ORACLES=3
-            DEVNET_ORACLE_1_PRIVATE_KEY=${{ env.DEVNET_ORACLE_1_PRIVATE_KEY }}
-            DEVNET_ORACLE_1_PUBLIC_KEY=${{ env.DEVNET_ORACLE_1_PUBLIC_KEY }}
-            DEVNET_ORACLE_2_PRIVATE_KEY=${{ env.DEVNET_ORACLE_2_PRIVATE_KEY }}
-            DEVNET_ORACLE_2_PUBLIC_KEY=${{ env.DEVNET_ORACLE_2_PUBLIC_KEY }}
-            DEVNET_ORACLE_3_PRIVATE_KEY=${{ env.DEVNET_ORACLE_3_PRIVATE_KEY }}
-            DEVNET_ORACLE_3_PUBLIC_KEY=${{ env.DEVNET_ORACLE_3_PUBLIC_KEY }}
-            DEVNET_ORACLE_DUMMY_PRIVATE_KEY=${{ env.DEVNET_ORACLE_DUMMY_PRIVATE_KEY }}
-            DEVNET_ORACLE_DUMMY_PUBLIC_KEY=${{ env.DEVNET_ORACLE_DUMMY_PUBLIC_KEY }}
+            ORACLE_1_PUBLIC_KEY=${{ env.ORACLE_1_PUBLIC_KEY }}
+            ORACLE_1_ENDPOINT=${{ env.ORACLE_1_ENDPOINT }}
+            ORACLE_2_PUBLIC_KEY=${{ env.ORACLE_2_PUBLIC_KEY }}
+            ORACLE_2_ENDPOINT=${{ env.ORACLE_2_ENDPOINT }}
+            ORACLE_3_PUBLIC_KEY=${{ env.ORACLE_3_PUBLIC_KEY }}
+            ORACLE_3_ENDPOINT=${{ env.ORACLE_3_ENDPOINT }}
+            ORACLE_DUMMY_PRIVATE_KEY=${{ env.ORACLE_DUMMY_PRIVATE_KEY }}
+            ORACLE_DUMMY_PUBLIC_KEY=${{ env.ORACLE_DUMMY_PUBLIC_KEY }}
 
   deploy:
     needs: build-and-push
@@ -239,7 +242,7 @@ jobs:
             aws ecr get-login-password --region eu-central-1 | docker login --username AWS --password-stdin $ECR_REGISTRY
 
             # 6) Pull Docker image from ECR
-            ECR_IMAGE="$ECR_REGISTRY/zkusd-containers:${{ needs.build-and-push.outputs.docker_tag }}"
+            ECR_IMAGE="$ECR_REGISTRY/zkusd-services:${{ needs.build-and-push.outputs.docker_tag }}"
             echo "Pulling Docker image: $ECR_IMAGE"
 
             if ! docker pull "$ECR_IMAGE"; then
