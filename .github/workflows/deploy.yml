@@ -16,10 +16,6 @@ jobs:
       ecr_registry: ${{ steps.login-ecr.outputs.registry }}
       docker_tag: ${{ steps.set_docker_tag.outputs.tag }}
 
-      hetzner_host: ${{ steps.parse-outputs.outputs.hetzner_host }}
-      hetzner_username: ${{ steps.parse-outputs.outputs.hetzner_username }}
-      hetzner_ssh_key: ${{ steps.fetch-secrets.outputs.hetzner_ssh_key }}
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -35,36 +31,6 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::565802942559:role/zkusd-services-github-actions-role
           aws-region: eu-central-1
-
-      - name: Download Terraform outputs
-        run: aws s3 cp s3://zkusd-terraform-outputs/terraform-outputs.json terraform-outputs.json
-
-      - name: Debug TF file
-        run: |
-          echo "==== Dumping terraform-outputs.json ===="
-          cat terraform-outputs.json
-          echo "==== Testing with jq ===="
-          echo "proof_generator_ip:"
-          jq -r '.proof_generator_ip.value' terraform-outputs.json
-          echo "proof_generator_username:"
-          jq -r '.proof_generator_username.value' terraform-outputs.json
-
-      - name: Parse Terraform outputs
-        id: parse-outputs
-        run: |
-          HETZNER_HOST=$(jq -r '.proof_generator_ip.value' terraform-outputs.json)
-          HETZNER_USERNAME=$(jq -r '.proof_generator_username.value' terraform-outputs.json)
-
-          echo "DEBUG: HETZNER_HOST=${HETZNER_HOST}"
-          echo "DEBUG: HETZNER_USERNAME=${HETZNER_USERNAME}"
-
-          # Mask them (so if they're not empty, they'd be redacted in logs)
-          echo "::add-mask::${HETZNER_HOST}"
-          echo "::add-mask::${HETZNER_USERNAME}"
-
-          # Expose as step outputs
-          echo "hetzner_host=${HETZNER_HOST}" >> $GITHUB_OUTPUT
-          echo "hetzner_username=${HETZNER_USERNAME}" >> $GITHUB_OUTPUT
 
       - name: Fetch secret values
         id: fetch-secrets
@@ -152,47 +118,127 @@ jobs:
           role-to-assume: arn:aws:iam::565802942559:role/zkusd-services-github-actions-role
           aws-region: eu-central-1
 
-      - name: Debug outputs from build-and-push (for verification, remove if not needed)
+      - name: Download Terraform outputs
+        run: aws s3 cp s3://zkusd-terraform-outputs/terraform-outputs.json terraform-outputs.json
+      - name: Parse Terraform outputs
+        id: parse-outputs
         run: |
-          echo "HETZNER_HOST=${{ needs.build-and-push.outputs.hetzner_host }}"
-          echo "HETZNER_USERNAME=${{ needs.build-and-push.outputs.hetzner_username }}"
-          echo "HETZNER_SSH_KEY length=${{ needs.build-and-push.outputs.hetzner_ssh_key != '' && 'VALID' || 'EMPTY' }}"
+          HETZNER_HOST=$(jq -r '.proof_generator_ip.value' terraform-outputs.json)
+          HETZNER_USERNAME=$(jq -r '.proof_generator_username.value' terraform-outputs.json)
+
+          # Mask them (so if they're not empty, they'd be redacted in logs)
+          echo "::add-mask::${HETZNER_HOST}"
+          echo "::add-mask::${HETZNER_USERNAME}"
+
+          # Expose as step outputs
+          echo "hetzner_host=${HETZNER_HOST}" >> $GITHUB_OUTPUT
+          echo "hetzner_username=${HETZNER_USERNAME}" >> $GITHUB_OUTPUT
+
+      - name: Fetch the proof-generator SSH key and save to a file
+        id: fetch-ssh-key
+        run: |
+          set +x  # Turn OFF debug tracing
+
+          PROOF_GENERATOR_SSH_SECRET=$(aws secretsmanager get-secret-value \
+            --secret-id zkusd/dev/proof-generator/ssh/secret-key \
+            --query SecretString --output text)
+
+          echo "${PROOF_GENERATOR_SSH_SECRET}" > /tmp/proof-generator-ssh-secret
+          chmod 600 /tmp/proof-generator-ssh-secret
+
+          echo "proof-generator-ssh-secret-path=/tmp/proof-generator-ssh-secret" >> $GITHUB_OUTPUT
+
+          set -x
 
       - name: Deploy to Hetzner
         uses: appleboy/ssh-action@master
         with:
-          host: ${{ needs.build-and-push.outputs.hetzner_host }}
-          username: ${{ needs.build-and-push.outputs.hetzner_username }}
-          key: ${{ needs.build-and-push.outputs.hetzner_ssh_key }}
+          host: ${{ steps.parse-outputs.outputs.hetzner_host }}
+          username: ${{ steps.parse-outputs.outputs.hetzner_username }}
+          key_path: ${{ steps.fetch-ssh-key.outputs.proof-generator-ssh-secret-path }}
           envs: AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_SESSION_TOKEN
           script: |
             set -e
 
+            echo "Checking CPU architecture of Hetzner machine..."
+            uname -m
+
             # 1) Install AWS CLI (v2) if not present
             if ! command -v aws &> /dev/null; then
               echo "Installing AWS CLI..."
+
+              # Detect architecture dynamically (optional)
+              ARCH=$(uname -m)
+              if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+                echo "Detected ARM64 architecture"
+                AWS_CLI_URL="https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip"
+              else
+                echo "Detected x86_64 architecture"
+                AWS_CLI_URL="https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"
+              fi
+
               apt-get update && apt-get install -y unzip curl
-              curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-              unzip awscliv2.zip
+
+              rm -rf aws awscliv2.zip
+              curl "$AWS_CLI_URL" -o "awscliv2.zip"
+              unzip -o awscliv2.zip
               ./aws/install
+
               export PATH=$PATH:/usr/local/bin
             fi
 
             # 2) Verify AWS CLI works
             aws --version
 
-            # 3) ECR login
+            # 3) Install Docker if not present
+            if ! command -v docker &> /dev/null; then
+              echo "Docker not found. Installing Docker CE..."
+
+              apt-get update
+
+              # Prerequisites
+              apt-get install -y \
+                ca-certificates \
+                curl \
+                gnupg \
+                lsb-release
+
+              # Add Docker’s official GPG key
+              install -m 0755 -d /etc/apt/keyrings
+              curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+              chmod a+r /etc/apt/keyrings/docker.gpg
+
+              # Set up the Docker repository
+              ARCH=$(dpkg --print-architecture)
+              echo \
+                "deb [arch=$ARCH signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+                $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+              # Install Docker CE
+              apt-get update
+              apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+            fi
+
+            # 4) Ensure Docker service is running
+            echo "Ensuring Docker is running..."
+            systemctl enable docker
+            systemctl start docker
+
+            docker --version
+            docker info
+
+            # 5) ECR login
             ECR_REGISTRY="${{ needs.build-and-push.outputs.ecr_registry }}"
             echo "Logging into ECR registry: $ECR_REGISTRY"
 
-            INPUT_HOST="${{ needs.build-and-push.outputs.hetzner_host }}"
-            INPUT_USERNAME="${{ needs.build-and-push.outputs.hetzner_username }}"
+            INPUT_HOST="${{ steps.parse-outputs.outputs.hetzner_host }}"
+            INPUT_USERNAME="${{ steps.parse-outputs.outputs.hetzner_username }}"
             echo "HOST $INPUT_HOST"
             echo "USERNAME $INPUT_USERNAME"
 
             aws ecr get-login-password --region eu-central-1 | docker login --username AWS --password-stdin $ECR_REGISTRY
 
-            # 4) Pull Docker image from ECR
+            # 6) Pull Docker image from ECR
             ECR_IMAGE="$ECR_REGISTRY/zkusd-containers:${{ needs.build-and-push.outputs.docker_tag }}"
             echo "Pulling Docker image: $ECR_IMAGE"
 
@@ -201,12 +247,12 @@ jobs:
               exit 1
             fi
 
-            # 5) Stop and remove the existing container
+            # 7) Stop and remove the existing container
             echo "Stopping and removing old container..."
             docker stop zkusd-services-container || true
             docker rm zkusd-services-container || true
 
-            # 6) Run the new container
+            # 8) Run the new container
             echo "Starting new container from $ECR_IMAGE"
             if ! docker run -d \
               --name zkusd-services-container \
@@ -216,7 +262,7 @@ jobs:
               exit 1
             fi
 
-            # 7) Verify container is running
+            # 9) Verify container is running
             echo "Verifying container is running..."
             if ! docker ps | grep -q zkusd-services-container; then
               echo "Container is not running after deployment"
