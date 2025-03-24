@@ -2,7 +2,7 @@ name: Build and Deploy Proof Generator
 
 on:
   push:
-    branches: [main]
+    branches: [develop]
   workflow_dispatch:
 
 permissions:
