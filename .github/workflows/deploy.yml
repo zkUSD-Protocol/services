@@ -1,17 +1,21 @@
-name: Build and Deploy
+name: Build and Deploy Proof Generator
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
 
-env:
-  DOCKER_IMAGE: mackcee/zkusd
-  DOCKER_TAG: latest
+permissions:
+  id-token: write # requesting the OIDC JWT token
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    outputs:
+      # Outputs for the second job:
+      ecr_registry: ${{ steps.login-ecr.outputs.registry }}
+      docker_tag: ${{ steps.set_docker_tag.outputs.tag }}
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -22,66 +26,250 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
 
-      - name: Login to DockerHub
-        uses: docker/login-action@v2
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          role-to-assume: arn:aws:iam::565802942559:role/zkusd-services-github-actions-role
+          aws-region: eu-central-1
 
+      - name: Fetch secret values
+        id: fetch-secrets
+        run: |
+          # SSH Key for Hetzner
+          HETZNER_SSH_KEY=$(aws secretsmanager get-secret-value \
+            --secret-id zkusd/dev/proof-generator/ssh/public-key \
+            --query SecretString --output text)
+
+          echo "::add-mask::$HETZNER_SSH_KEY"
+          echo "hetzner_ssh_key=$HETZNER_SSH_KEY" >> $GITHUB_OUTPUT
+
+          # Mongo URI
+          MONGO_URI=$(aws secretsmanager get-secret-value --secret-id zkusd/dev/mongo-uri --query SecretString --output text)
+          echo "::add-mask::$MONGO_URI"
+          echo "MONGO_URI=$MONGO_URI" >> $GITHUB_ENV
+
+          # Oracle Public Keys And Endpoints
+          ORACLE_1_PUBLIC_KEY=B62qrYmswnMHuSg8wzeQBYu3fFC2bY2QN8G9d3x4unTkA33oC917nbF
+          ORACLE_1_ENDPOINT=http://188.245.71.94:3337/api/price
+          ORACLE_2_PUBLIC_KEY=B62qjnCpbdT1yP3SPTczLkM4QwKu2y5GxonpYm2kjkvTQ38Ck2Lhmeo
+          ORACLE_2_ENDPOINT=http://167.235.79.145:3337/api/price
+          ORACLE_3_PUBLIC_KEY=B62qrrhbuYP5UxWbhdL9FHTGfeAERjx8ofCjQPUVS9cfQ9ijR8PrvAk
+          ORACLE_3_ENDPOINT=http://128.140.78.73:3337/api/price
+
+          echo "ORACLE_1_PUBLIC_KEY=$ORACLE_1_PUBLIC_KEY" >> $GITHUB_ENV
+          echo "ORACLE_1_ENDPOINT=$ORACLE_1_ENDPOINT" >> $GITHUB_ENV
+          echo "ORACLE_2_PUBLIC_KEY=$ORACLE_2_PUBLIC_KEY" >> $GITHUB_ENV
+          echo "ORACLE_2_ENDPOINT=$ORACLE_2_ENDPOINT" >> $GITHUB_ENV
+          echo "ORACLE_3_PUBLIC_KEY=$ORACLE_3_PUBLIC_KEY" >> $GITHUB_ENV
+          echo "ORACLE_3_ENDPOINT=$ORACLE_3_ENDPOINT" >> $GITHUB_ENV
+
+          # Dummy oracle keys
+          DUMMY_PRIVATE_KEY=$(aws secretsmanager get-secret-value --secret-id zkusd/dev/oracle-dummy/secret-key --query SecretString --output text)
+          DUMMY_PUBLIC_KEY=$(aws secretsmanager get-secret-value --secret-id zkusd/dev/oracle-dummy/public-key --query SecretString --output text)
+
+          echo "::add-mask::$DUMMY_PRIVATE_KEY"
+          echo "::add-mask::$DUMMY_PUBLIC_KEY"
+
+          echo "ORACLE_DUMMY_PRIVATE_KEY=$DUMMY_PRIVATE_KEY" >> $GITHUB_ENV
+          echo "ORACLE_DUMMY_PUBLIC_KEY=$DUMMY_PUBLIC_KEY" >> $GITHUB_ENV
+
+      - name: Set Docker tag
+        id: set_docker_tag
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          echo "tag=$SHORT_SHA" >> $GITHUB_OUTPUT
+
+      # 7) LOGIN TO ECR
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+        with:
+          mask-password: true
+
+      # 8) BUILD AND PUSH DOCKER IMAGE
       - name: Build and push Docker image
         uses: docker/build-push-action@v4
         with:
           context: .
           platforms: linux/arm64
           push: true
-          tags: ${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }}
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/zkusd-services:latest
+            ${{ steps.login-ecr.outputs.registry }}/zkusd-services:${{ steps.set_docker_tag.outputs.tag }}
           build-args: |
             NODE_ENV=production
             NETWORK=devnet
             BLOCKCHECK_INTERVAL=10
-            MONGO_URI=${{ secrets.MONGO_URI }}
+            MONGO_URI=${{ env.MONGO_URI }}
             NUMBER_OF_ORACLES=3
-            DEVNET_ORACLE_1_PRIVATE_KEY=${{ secrets.DEVNET_ORACLE_1_PRIVATE_KEY }}
-            DEVNET_ORACLE_1_PUBLIC_KEY=${{ secrets.DEVNET_ORACLE_1_PUBLIC_KEY }}
-            DEVNET_ORACLE_2_PRIVATE_KEY=${{ secrets.DEVNET_ORACLE_2_PRIVATE_KEY }}
-            DEVNET_ORACLE_2_PUBLIC_KEY=${{ secrets.DEVNET_ORACLE_2_PUBLIC_KEY }}
-            DEVNET_ORACLE_3_PRIVATE_KEY=${{ secrets.DEVNET_ORACLE_3_PRIVATE_KEY }}
-            DEVNET_ORACLE_3_PUBLIC_KEY=${{ secrets.DEVNET_ORACLE_3_PUBLIC_KEY }}
-            DEVNET_ORACLE_DUMMY_PRIVATE_KEY=${{ secrets.DEVNET_ORACLE_DUMMY_PRIVATE_KEY }}
-            DEVNET_ORACLE_DUMMY_PUBLIC_KEY=${{ secrets.DEVNET_ORACLE_DUMMY_PUBLIC_KEY }}
+            ORACLE_1_PUBLIC_KEY=${{ env.ORACLE_1_PUBLIC_KEY }}
+            ORACLE_1_ENDPOINT=${{ env.ORACLE_1_ENDPOINT }}
+            ORACLE_2_PUBLIC_KEY=${{ env.ORACLE_2_PUBLIC_KEY }}
+            ORACLE_2_ENDPOINT=${{ env.ORACLE_2_ENDPOINT }}
+            ORACLE_3_PUBLIC_KEY=${{ env.ORACLE_3_PUBLIC_KEY }}
+            ORACLE_3_ENDPOINT=${{ env.ORACLE_3_ENDPOINT }}
+            ORACLE_DUMMY_PRIVATE_KEY=${{ env.ORACLE_DUMMY_PRIVATE_KEY }}
+            ORACLE_DUMMY_PUBLIC_KEY=${{ env.ORACLE_DUMMY_PUBLIC_KEY }}
 
   deploy:
     needs: build-and-push
     runs-on: ubuntu-latest
     steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          role-to-assume: arn:aws:iam::565802942559:role/zkusd-services-github-actions-role
+          aws-region: eu-central-1
+
+      - name: Download Terraform outputs
+        run: aws s3 cp s3://zkusd-terraform-outputs/terraform-outputs.json terraform-outputs.json
+      - name: Parse Terraform outputs
+        id: parse-outputs
+        run: |
+          HETZNER_HOST=$(jq -r '.proof_generator_ip.value' terraform-outputs.json)
+          HETZNER_USERNAME=$(jq -r '.proof_generator_username.value' terraform-outputs.json)
+
+          # Mask them (so if they're not empty, they'd be redacted in logs)
+          echo "::add-mask::${HETZNER_HOST}"
+          echo "::add-mask::${HETZNER_USERNAME}"
+
+          # Expose as step outputs
+          echo "hetzner_host=${HETZNER_HOST}" >> $GITHUB_OUTPUT
+          echo "hetzner_username=${HETZNER_USERNAME}" >> $GITHUB_OUTPUT
+
+      - name: Fetch the proof-generator SSH key and save to a file
+        id: fetch-ssh-key
+        run: |
+          set +x  # Turn OFF debug tracing
+
+          PROOF_GENERATOR_SSH_SECRET=$(aws secretsmanager get-secret-value \
+            --secret-id zkusd/dev/proof-generator/ssh/secret-key \
+            --query SecretString --output text)
+
+          echo "${PROOF_GENERATOR_SSH_SECRET}" > /tmp/proof-generator-ssh-secret
+          chmod 600 /tmp/proof-generator-ssh-secret
+
+          echo "proof-generator-ssh-secret-path=/tmp/proof-generator-ssh-secret" >> $GITHUB_OUTPUT
+
+          set -x
+
       - name: Deploy to Hetzner
         uses: appleboy/ssh-action@master
         with:
-          host: ${{ secrets.HETZNER_HOST }}
-          username: ${{ secrets.HETZNER_USERNAME }}
-          key: ${{ secrets.HETZNER_SSH_KEY }}
+          host: ${{ steps.parse-outputs.outputs.hetzner_host }}
+          username: ${{ steps.parse-outputs.outputs.hetzner_username }}
+          key_path: ${{ steps.fetch-ssh-key.outputs.proof-generator-ssh-secret-path }}
+          envs: AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_SESSION_TOKEN
           script: |
-            # Pull the latest image
-            if ! docker pull ${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }}; then
+            set -e
+
+            echo "Checking CPU architecture of Hetzner machine..."
+            uname -m
+
+            # 1) Install AWS CLI (v2) if not present
+            if ! command -v aws &> /dev/null; then
+              echo "Installing AWS CLI..."
+
+              # Detect architecture dynamically (optional)
+              ARCH=$(uname -m)
+              if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+                echo "Detected ARM64 architecture"
+                AWS_CLI_URL="https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip"
+              else
+                echo "Detected x86_64 architecture"
+                AWS_CLI_URL="https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"
+              fi
+
+              apt-get update && apt-get install -y unzip curl
+
+              rm -rf aws awscliv2.zip
+              curl "$AWS_CLI_URL" -o "awscliv2.zip"
+              unzip -o awscliv2.zip
+              ./aws/install
+
+              export PATH=$PATH:/usr/local/bin
+            fi
+
+            # 2) Verify AWS CLI works
+            aws --version
+
+            # 3) Install Docker if not present
+            if ! command -v docker &> /dev/null; then
+              echo "Docker not found. Installing Docker CE..."
+
+              apt-get update
+
+              # Prerequisites
+              apt-get install -y \
+                ca-certificates \
+                curl \
+                gnupg \
+                lsb-release
+
+              # Add Docker’s official GPG key
+              install -m 0755 -d /etc/apt/keyrings
+              curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+              chmod a+r /etc/apt/keyrings/docker.gpg
+
+              # Set up the Docker repository
+              ARCH=$(dpkg --print-architecture)
+              echo \
+                "deb [arch=$ARCH signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+                $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+              # Install Docker CE
+              apt-get update
+              apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+            fi
+
+            # 4) Ensure Docker service is running
+            echo "Ensuring Docker is running..."
+            systemctl enable docker
+            systemctl start docker
+
+            docker --version
+            docker info
+
+            # 5) ECR login
+            ECR_REGISTRY="${{ needs.build-and-push.outputs.ecr_registry }}"
+            echo "Logging into ECR registry: $ECR_REGISTRY"
+
+            INPUT_HOST="${{ steps.parse-outputs.outputs.hetzner_host }}"
+            INPUT_USERNAME="${{ steps.parse-outputs.outputs.hetzner_username }}"
+            echo "HOST $INPUT_HOST"
+            echo "USERNAME $INPUT_USERNAME"
+
+            aws ecr get-login-password --region eu-central-1 | docker login --username AWS --password-stdin $ECR_REGISTRY
+
+            # 6) Pull Docker image from ECR
+            ECR_IMAGE="$ECR_REGISTRY/zkusd-services:${{ needs.build-and-push.outputs.docker_tag }}"
+            echo "Pulling Docker image: $ECR_IMAGE"
+
+            if ! docker pull "$ECR_IMAGE"; then
               echo "Failed to pull Docker image"
               exit 1
             fi
 
-            # Stop and remove the existing container
+            # 7) Stop and remove the existing container
+            echo "Stopping and removing old container..."
             docker stop zkusd-services-container || true
             docker rm zkusd-services-container || true
 
-            # Run the new container
+            # 8) Run the new container
+            echo "Starting new container from $ECR_IMAGE"
             if ! docker run -d \
               --name zkusd-services-container \
               --restart unless-stopped \
-              ${{ env.DOCKER_IMAGE }}:${{ env.DOCKER_TAG }}; then
+              "$ECR_IMAGE"; then
               echo "Failed to start container"
               exit 1
             fi
 
-            # Verify container is running
-            if ! docker ps | grep zkusd-services-container; then
+            # 9) Verify container is running
+            echo "Verifying container is running..."
+            if ! docker ps | grep -q zkusd-services-container; then
               echo "Container is not running after deployment"
               exit 1
             fi
+
+            echo "✅ Deployment successful!"
