@@ -2,6 +2,7 @@ import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 import { PrivateKey, PublicKey } from 'o1js';
 import path from 'path';
+import { Oracle } from '../types/oracle';
 import {
   OracleWhitelist,
   blockchain,
@@ -42,7 +43,7 @@ const buildOracleWhitelist = (chain: blockchain): OracleWhitelist => {
 
     // Add the real oracle public keys we have
     for (let i = 0; i < numOracles; i++) {
-      const publicKeyEnvVar = `DEVNET_ORACLE_${i + 1}_PUBLIC_KEY`;
+      const publicKeyEnvVar = `ORACLE_${i + 1}_PUBLIC_KEY`;
       const publicKey = process.env[publicKeyEnvVar];
       if (!publicKey) {
         throw new Error(`Missing environment variable: ${publicKeyEnvVar}`);
@@ -53,7 +54,7 @@ const buildOracleWhitelist = (chain: blockchain): OracleWhitelist => {
     // Fill remaining slots with dummy public key
     const remainingSlots = OracleWhitelist.MAX_PARTICIPANTS - numOracles;
     const dummyPublicKey = PublicKey.fromBase58(
-      process.env.DEVNET_ORACLE_DUMMY_PUBLIC_KEY!
+      process.env.ORACLE_DUMMY_PUBLIC_KEY || ''
     );
 
     for (let i = 0; i < remainingSlots; i++) {
@@ -64,13 +65,13 @@ const buildOracleWhitelist = (chain: blockchain): OracleWhitelist => {
   return whitelist;
 };
 
-const buildOracleKeyList = (chain: blockchain): KeyPair[] => {
-  const oracleKeys: KeyPair[] = [];
+const buildOracles = (chain: blockchain): Array<KeyPair | Oracle> => {
+  const oracles: Array<KeyPair | Oracle> = [];
 
   if (chain === 'lightnet') {
     const networkKeys = getNetworkKeys(chain);
     networkKeys.oracles!.map((oracle) => {
-      oracleKeys.push({
+      oracles.push({
         publicKey: oracle.publicKey,
         privateKey: oracle.privateKey,
       } as KeyPair);
@@ -79,24 +80,36 @@ const buildOracleKeyList = (chain: blockchain): KeyPair[] => {
     const numOracles = parseInt(process.env.NUMBER_OF_ORACLES || '0');
 
     for (let i = 0; i < numOracles; i++) {
-      const publicKeyEnvVar = `DEVNET_ORACLE_${i + 1}_PUBLIC_KEY`;
-      const privateKeyEnvVar = `DEVNET_ORACLE_${i + 1}_PRIVATE_KEY`;
-
+      const publicKeyEnvVar = `ORACLE_${i + 1}_PUBLIC_KEY`;
+      const endpointEnvVar = `ORACLE_${i + 1}_ENDPOINT`;
       const publicKey = process.env[publicKeyEnvVar];
-      const privateKey = process.env[privateKeyEnvVar];
+      const endpoint = process.env[endpointEnvVar];
 
-      if (!publicKey || !privateKey) {
-        throw new Error(`Missing environment variables for oracle ${i + 1}`);
+      if (!publicKey || !endpoint) {
+        throw new Error(`Missing oracle ${i + 1} config`);
       }
 
-      oracleKeys.push({
+      oracles.push({
         publicKey: PublicKey.fromBase58(publicKey),
-        privateKey: PrivateKey.fromBase58(privateKey),
-      });
+        endpoint: endpoint,
+      } as Oracle);
+    }
+
+    // Add dummy oracle
+    const remainingSlots = OracleWhitelist.MAX_PARTICIPANTS - numOracles;
+    for (let i = 0; i < remainingSlots; i++) {
+      oracles.push({
+        publicKey: PublicKey.fromBase58(
+          process.env.ORACLE_DUMMY_PUBLIC_KEY || ''
+        ),
+        privateKey: PrivateKey.fromBase58(
+          process.env.ORACLE_DUMMY_PRIVATE_KEY || ''
+        ),
+      } as KeyPair);
     }
   }
 
-  return oracleKeys;
+  return oracles;
 };
 
 const { engine, token } = getContractKeys(process.env.NETWORK as blockchain);
@@ -118,9 +131,13 @@ const config = {
   oracleWhitelist: buildOracleWhitelist(
     (process.env.NETWORK as blockchain) || 'local'
   ),
-  oracleKeys: buildOracleKeyList(
-    (process.env.NETWORK as blockchain) || 'local'
-  ),
+  oracles: buildOracles((process.env.NETWORK as blockchain) || 'local'),
+  dummyOracle: {
+    publicKey: PublicKey.fromBase58(process.env.ORACLE_DUMMY_PUBLIC_KEY || ''),
+    privateKey: PrivateKey.fromBase58(
+      process.env.ORACLE_DUMMY_PRIVATE_KEY || ''
+    ),
+  },
 };
 
 export default config;

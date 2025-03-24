@@ -1,12 +1,8 @@
 import { fetchLastBlock, UInt32 } from 'o1js';
-import { proof } from './proof.js';
-import { oracleAggregator } from './oracle-aggregator.js';
 import config from '../config/index.js';
-import { eventProcessor } from './event-processor.js';
 import { logger } from '../utils/logger.js';
-import { fork } from 'child_process';
 import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
+import { dirname } from 'path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -94,7 +90,7 @@ class Orchestrator {
   private async checkNewBlock() {
     // If already processing a block, skip this check
     if (this.isProcessing) {
-      logger.info('Still processing previous block, skipping check');
+      logger.info('🔍 Still processing previous block, skipping check');
       return;
     }
 

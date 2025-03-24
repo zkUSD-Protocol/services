@@ -1,4 +1,4 @@
-import { AggregateOraclePrices, OracleWhitelist } from '@zkusd/core';
+import { OracleWhitelist, AggregateOraclePrices } from '@zkusd/core';
 import { IGenerateProofRequest } from '../types/index.js';
 import config from '../config/index.js';
 import { ProofModel } from '../models/index.js';
@@ -26,7 +26,12 @@ class ProofService {
    * Must be called before generating proofs.
    */
   async init(): Promise<void> {
-    await AggregateOraclePrices.compile();
+    try {
+      await AggregateOraclePrices.compile();
+    } catch (error) {
+      logger.error('Failed to compile proof circuit:', error);
+      throw new Error('Failed to compile proof circuit');
+    }
   }
 
   /**
