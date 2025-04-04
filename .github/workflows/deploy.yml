@@ -50,11 +50,11 @@ jobs:
 
           # Oracle Public Keys And Endpoints
           ORACLE_1_PUBLIC_KEY=B62qrYmswnMHuSg8wzeQBYu3fFC2bY2QN8G9d3x4unTkA33oC917nbF
-          ORACLE_1_ENDPOINT=http://188.245.71.94:3337/api/price
+          ORACLE_1_ENDPOINT=https://oracle1.fizk.xyz/api/price
           ORACLE_2_PUBLIC_KEY=B62qjnCpbdT1yP3SPTczLkM4QwKu2y5GxonpYm2kjkvTQ38Ck2Lhmeo
-          ORACLE_2_ENDPOINT=http://167.235.79.145:3337/api/price
+          ORACLE_2_ENDPOINT=https://oracle2.fizk.xyz/api/price
           ORACLE_3_PUBLIC_KEY=B62qrrhbuYP5UxWbhdL9FHTGfeAERjx8ofCjQPUVS9cfQ9ijR8PrvAk
-          ORACLE_3_ENDPOINT=http://128.140.78.73:3337/api/price
+          ORACLE_3_ENDPOINT=https://oracle3.fizk.xyz/api/price
 
           echo "ORACLE_1_PUBLIC_KEY=$ORACLE_1_PUBLIC_KEY" >> $GITHUB_ENV
           echo "ORACLE_1_ENDPOINT=$ORACLE_1_ENDPOINT" >> $GITHUB_ENV
