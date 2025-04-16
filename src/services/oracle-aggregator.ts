@@ -4,10 +4,10 @@ import {
   OraclePriceSubmissions,
   OracleWhitelist,
   KeyPair,
+  Oracle,
 } from '@zkusd/core';
 import config from '../config/index.js';
 import Client from 'mina-signer';
-import { Oracle } from 'types/oracle.js';
 import { logger } from '../utils/logger.js';
 
 const client = new Client({
@@ -64,7 +64,7 @@ class OracleAggregator {
                 const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
 
                 // Fetch price from oracle with better error handling
-                const response = await fetch(oracle.endpoint, {
+                const response = await fetch(oracle.endpoint!, {
                   signal: controller.signal,
                 }).catch((error) => {
                   logger.warn(`Oracle ${index} fetch failed: ${error.message}`);
@@ -147,7 +147,7 @@ class OracleAggregator {
                 );
                 signature = Signature.fromBase58(dummySigned.signature);
                 isDummy = Bool(true);
-                publicKey = config.dummyOracle.publicKey;
+                publicKey = config.dummyOracle!.publicKey; // We are in devnet here
               }
             } else {
               // Dummy oracle submission
